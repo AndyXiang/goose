@@ -2,12 +2,15 @@ use crate::error::{Error, Result};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use std::fmt::{self, Display, Formatter};
+use std::str::FromStr;
 use uuid::Uuid;
 
 mod db;
+pub use db::DataBase;
 mod handler;
+pub use handler::DataHandler;
 
-#[derive(Clone, Copy, Debug, Hash)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 // represent tradable assets
 pub enum Asset {
     Stock,
@@ -25,7 +28,20 @@ impl Display for Asset {
     }
 }
 
-#[derive(Clone, Copy, Debug, Hash)]
+impl FromStr for Asset {
+    type Err = Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "stock" => Ok(Self::Stock),
+            "stockus" => Ok(Self::StockUS),
+            "futures" => Ok(Self::Futures),
+            _ => Err(Error::data(format!("invalid asset: {value}"))),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Exchange {
     SZ,
     BJ,
@@ -42,7 +58,20 @@ impl Display for Exchange {
     }
 }
 
-#[derive(Clone, Copy, Debug, Hash)]
+impl FromStr for Exchange {
+    type Err = Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "sz" => Ok(Self::SZ),
+            "bj" => Ok(Self::BJ),
+            "sh" => Ok(Self::SH),
+            _ => Err(Error::data(format!("invalid exchange: {value}"))),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AssetSymbol {
     asset: Asset,
     exchange: Exchange,
@@ -52,6 +81,32 @@ pub struct AssetSymbol {
 impl AssetSymbol {
     pub fn to_string(self) -> String {
         format!("{}_{}_{}", self.asset, self.exchange, self.id)
+    }
+}
+
+impl FromStr for AssetSymbol {
+    type Err = Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        let mut parts = value.splitn(3, '_');
+        let asset = parts
+            .next()
+            .ok_or_else(|| Error::data(format!("invalid asset symbol: {value}")))?
+            .parse()?;
+        let exchange = parts
+            .next()
+            .ok_or_else(|| Error::data(format!("invalid asset symbol: {value}")))?
+            .parse()?;
+        let id = parts
+            .next()
+            .ok_or_else(|| Error::data(format!("invalid asset symbol: {value}")))?
+            .parse()?;
+
+        Ok(Self {
+            asset,
+            exchange,
+            id,
+        })
     }
 }
 

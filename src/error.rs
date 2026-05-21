@@ -10,6 +10,15 @@ pub struct Error {
     msg: String,
 }
 
+impl Error {
+    pub fn data(msg: impl Into<String>) -> Self {
+        Self {
+            kind: ErrorKind::Data,
+            msg: msg.into(),
+        }
+    }
+}
+
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}: {}", self.kind, self.msg)
@@ -31,6 +40,24 @@ impl From<rusqlite::Error> for Error {
 
 impl From<rust_decimal::Error> for Error {
     fn from(err: rust_decimal::Error) -> Self {
+        Error {
+            kind: ErrorKind::Data,
+            msg: err.to_string(),
+        }
+    }
+}
+
+impl From<chrono::ParseError> for Error {
+    fn from(err: chrono::ParseError) -> Self {
+        Error {
+            kind: ErrorKind::Data,
+            msg: err.to_string(),
+        }
+    }
+}
+
+impl From<uuid::Error> for Error {
+    fn from(err: uuid::Error) -> Self {
         Error {
             kind: ErrorKind::Data,
             msg: err.to_string(),

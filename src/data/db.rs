@@ -29,6 +29,16 @@ impl DataBase {
                 PRIMARY KEY (symbol, date)
             );
 
+            CREATE TABLE IF NOT EXISTS equity_master (
+                symbol TEXT NOT NULL,
+                name TEXT NOT NULL,
+                exchange TEXT NOT NULL,
+                code TEXT NOT NULL,
+                list_date TEXT NOT NULL,
+                delist_date TEXT,
+                PRIMARY KEY (symbol)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_daily_bars_date_symbol
             ON daily_bars(date, symbol);
             ",
