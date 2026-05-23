@@ -39,7 +39,7 @@ impl Entity for StockCN {
 
     fn schema(&self) -> &'static str {
         "
-        CREATE TABLE IF NOT EXISTS stock_cn_master (
+        CREATE TABLE IF NOT EXISTS stock_cn (
             id          TEXT NOT NULL,
             date        TEXT NOT NULL,
             code        TEXT NOT NULL,
@@ -51,4 +51,38 @@ impl Entity for StockCN {
         );
         "
     }
+}
+
+pub enum ExchangeCN {
+    SZ,
+    SH,
+    BJ
+}
+
+impl Display for ExchangeCN {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SZ => write!(f, "exchange_cn_sz"),
+            Self::SH => write!(f, "exchange_cn_sh"),
+            Self::BJ => write!(f, "exchange_cn_bj"),
+        }
+    }
+}
+
+impl Entity for ExchangeCN {
+    const ENTITY_TYPE: &'static str = "exchange";
+
+    fn id(&self) -> Uuid {
+        Uuid::new_v5(&Uuid::NAMESPACE_OID, self.to_string().as_bytes())
+    }
+
+    fn schema(&self) -> &'static str {
+        "
+        CREATE TABLE IF NOT EXISTS exchange_cn (
+            id          TEXT NOT NULL,
+            date        TEXT NOT NULL,
+            PRIMARY KEY (id, date)
+        );
+        "
+    } 
 }

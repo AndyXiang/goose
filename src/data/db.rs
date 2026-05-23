@@ -12,7 +12,7 @@ pub struct DataBase {
 impl DataBase {
     pub fn new(path: &str) -> Result<Self> {
         let conn = Connection::open(path)?;
-        conn.execute(
+        conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS daily_bar (
                 id      TEXT NOT NULL,
@@ -26,8 +26,15 @@ impl DataBase {
                 qfq     TEXT NOT NULL,
                 PRIMARY KEY (id, date)
             );
+
+            CREATE TABLE IF NOT EXISTS calendar (
+                market  TEXT NOT NULL,
+                date    TEXT NOT NULL,
+                name    TEXT NOT NULL,
+                is_open INTEGER NOT NULL,
+                PRIMARY KEY (market, date)
+            );
             ",
-            params![],
         )?;
 
         Ok(Self { conn })
@@ -64,6 +71,22 @@ impl DataBase {
 
         let bars = rows.collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(bars)
+    }
+
+    // get open trading days for given market in the range of [start, end]
+    pub fn get_trading_days(&self, id: &str, start: &str, end: &str) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "
+            SELECT date
+            FROM calendar
+            WHERE market = ?1 AND date >= ?2 AND date <= ?3 AND is_open = 1
+            ORDER BY date
+            ",
+        )?;
+
+        let rows = stmt.query_map(params![market, start, end], |row| row.get(0))?;
+        let dates = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(dates)
     }
 
     pub fn execute(&self, sql: &str) -> Result<usize> {
