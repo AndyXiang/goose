@@ -48,4 +48,6 @@ pub enum RiskEvent {
     
 }
 
-pub enum SystemEvent {}
+pub enum SystemEvent {
+    BacktestInit
+}

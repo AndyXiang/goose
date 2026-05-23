@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 pub trait Entity: Display {
     const ENTITY_TYPE: &'static str;
-    type Data;
+    // type Data;
     fn id(&self) -> Uuid;
     fn schema(&self) -> &'static str;
 }
@@ -31,7 +31,7 @@ impl Display for StockCN {
 
 impl Entity for StockCN {
     const ENTITY_TYPE: &'static str = "stock";
-    type Data = (TimeStamp, Bar);
+    // type Data = (TimeStamp, Bar);
 
     fn id(&self) -> Uuid {
         Uuid::new_v5(&Uuid::NAMESPACE_OID, self.to_string().as_bytes())
