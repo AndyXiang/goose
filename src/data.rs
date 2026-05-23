@@ -1,116 +1,65 @@
 use crate::error::{Error, Result};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, SecondsFormat, Utc};
 use rust_decimal::Decimal;
 use std::fmt::{self, Display, Formatter};
 use std::str::FromStr;
 use uuid::Uuid;
 
 mod db;
-pub use db::DataBase;
+mod entity;
 mod handler;
-pub use handler::DataHandler;
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-// represent tradable assets
-pub enum Asset {
-    Stock,
-    StockUS,
-    Futures,
+pub use db::DataBase;
+pub use entity::*;
+pub use handler::*;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TimeStamp(DateTime<Utc>);
+
+impl TimeStamp {
+    pub fn new(value: DateTime<Utc>) -> Self {
+        Self(value)
+    }
+
+    pub fn into_inner(self) -> DateTime<Utc> {
+        self.0
+    }
 }
 
-impl Display for Asset {
+impl Display for TimeStamp {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Stock => write!(f, "stock"),
-            Self::StockUS => write!(f, "stockus"),
-            Self::Futures => write!(f, "futures"),
-        }
+        write!(f, "{}", self.0.to_rfc3339_opts(SecondsFormat::Secs, true))
     }
 }
 
-impl FromStr for Asset {
+impl From<DateTime<Utc>> for TimeStamp {
+    fn from(value: DateTime<Utc>) -> Self {
+        Self(value)
+    }
+}
+
+impl From<TimeStamp> for DateTime<Utc> {
+    fn from(value: TimeStamp) -> Self {
+        value.0
+    }
+}
+
+impl FromStr for TimeStamp {
     type Err = Error;
 
     fn from_str(value: &str) -> Result<Self> {
-        match value {
-            "stock" => Ok(Self::Stock),
-            "stockus" => Ok(Self::StockUS),
-            "futures" => Ok(Self::Futures),
-            _ => Err(Error::data(format!("invalid asset: {value}"))),
+        if let Ok(ts) = DateTime::parse_from_rfc3339(value) {
+            return Ok(Self(ts.with_timezone(&Utc)));
         }
+
+        let date = NaiveDate::parse_from_str(value, "%Y-%m-%d")?;
+        let datetime = date
+            .and_hms_opt(0, 0, 0)
+            .ok_or_else(|| Error::data(format!("invalid date: {value}")))?;
+
+        Ok(Self(DateTime::from_naive_utc_and_offset(datetime, Utc)))
     }
 }
-
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Exchange {
-    SZ,
-    BJ,
-    SH,
-}
-
-impl Display for Exchange {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::SZ => write!(f, "sz"),
-            Self::BJ => write!(f, "bj"),
-            Self::SH => write!(f, "sh"),
-        }
-    }
-}
-
-impl FromStr for Exchange {
-    type Err = Error;
-
-    fn from_str(value: &str) -> Result<Self> {
-        match value {
-            "sz" => Ok(Self::SZ),
-            "bj" => Ok(Self::BJ),
-            "sh" => Ok(Self::SH),
-            _ => Err(Error::data(format!("invalid exchange: {value}"))),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct AssetSymbol {
-    asset: Asset,
-    exchange: Exchange,
-    id: Uuid,
-}
-
-impl AssetSymbol {
-    pub fn to_string(self) -> String {
-        format!("{}_{}_{}", self.asset, self.exchange, self.id)
-    }
-}
-
-impl FromStr for AssetSymbol {
-    type Err = Error;
-
-    fn from_str(value: &str) -> Result<Self> {
-        let mut parts = value.splitn(3, '_');
-        let asset = parts
-            .next()
-            .ok_or_else(|| Error::data(format!("invalid asset symbol: {value}")))?
-            .parse()?;
-        let exchange = parts
-            .next()
-            .ok_or_else(|| Error::data(format!("invalid asset symbol: {value}")))?
-            .parse()?;
-        let id = parts
-            .next()
-            .ok_or_else(|| Error::data(format!("invalid asset symbol: {value}")))?
-            .parse()?;
-
-        Ok(Self {
-            asset,
-            exchange,
-            id,
-        })
-    }
-}
-
-pub type TimeStamp = DateTime<Utc>;
 
 #[derive(Debug, Clone)]
 pub struct Bar {
