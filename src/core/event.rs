@@ -1,9 +1,9 @@
-use crate::data::{Entity, Bar, TimeStamp};
+use crate::data::{Bar, Entity, TimeStamp};
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
 pub enum Event {
-    Market(MarketEvent), 
+    Market(MarketEvent),
     Clock(ClockEvent),
     Position(PositionEvent),
     Order(OrderEvent),
@@ -26,28 +26,41 @@ pub struct PositionEvent {
     weight: Decimal,
 }
 
-pub struct OrderEvent {
-    id: Uuid,
-    name: String,
-    code: String,
-    ts: TimeStamp,
-    amount: Decimal,
+pub enum OrderEvent {
+    Sell {
+        id: Uuid,
+        ts: TimeStamp,
+        amount: Decimal,
+        price: Decimal,
+    },
+    Buy {
+        id: Uuid,
+        ts: TimeStamp,
+        amount: Decimal,
+        price: Decimal,
+    },
 }
 
-pub struct FillEvent {
-    id: Uuid,
-    name: String,
-    code: String,
-    ts: TimeStamp,
-    amount: Decimal,
-    price: Decimal,
-    commission: Decimal,
+pub enum FillEvent {
+    Sell {
+        order: OrderEvent,
+        ts: TimeStamp,
+        amount: Decimal,
+        price: Decimal,
+        commision: Decimal,
+    },
+    Buy {
+        order: OrderEvent,
+        ts: TimeStamp,
+        amount: Decimal,
+        price: Decimal,
+        commision: Decimal,
+    },
+    Cancel { order: OrderEvent, ts: TimeStamp},
 }
 
-pub enum RiskEvent {
-    
-}
+pub enum RiskEvent {}
 
 pub enum SystemEvent {
-    BacktestInit
+    BacktestInit,
 }
