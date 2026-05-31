@@ -74,7 +74,7 @@ impl DataBase {
     }
 
     // get open trading days for given market in the range of [start, end]
-    pub fn get_trading_days(&self, id: &str, start: &str, end: &str) -> Result<Vec<String>> {
+    pub fn get_trading_days(&self, market: &str, start: &str, end: &str) -> Result<Vec<String>> {
         let mut stmt = self.conn.prepare(
             "
             SELECT date
