@@ -15,7 +15,9 @@ pub trait Entity: Display {
     fn schema(&self) -> &'static str;
 }
 
+#[derive(Debug, Clone)]
 pub struct StockCN {
+    pub id: Uuid,
     pub code: String,
     pub name: String,
     pub exchange: String,

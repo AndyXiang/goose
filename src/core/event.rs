@@ -1,5 +1,6 @@
-use crate::data::{Asset, AssetSymbol, Bar, TimeStamp};
+use crate::data::{Entity, Bar, TimeStamp};
 use rust_decimal::Decimal;
+use uuid::Uuid;
 
 pub enum Event {
     Market(MarketEvent), 
@@ -12,7 +13,7 @@ pub enum Event {
 }
 
 pub enum MarketEvent {
-    Bar { symbol: AssetSymbol, ts: TimeStamp, bar: Bar },
+    Bar { id: Uuid, ts: TimeStamp, bar: Bar },
 }
 
 pub enum ClockEvent {
@@ -21,21 +22,20 @@ pub enum ClockEvent {
 }
 
 pub struct PositionEvent {
-    symbol: AssetSymbol,
+    id: Uuid,
     weight: Decimal,
 }
 
 pub struct OrderEvent {
-    symbol: AssetSymbol,
+    id: Uuid,
     name: String,
     code: String,
     ts: TimeStamp,
     amount: Decimal,
-    reason: String,
 }
 
 pub struct FillEvent {
-    symbol: AssetSymbol,
+    id: Uuid,
     name: String,
     code: String,
     ts: TimeStamp,
