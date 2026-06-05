@@ -65,16 +65,21 @@ pub struct StockCN {
 }
 
 impl StockCN {
-    pub fn new(exchange: ExchangeCN, code: String, name: String, list_date: TimeStamp) -> Self {
+    pub fn new(
+        exchange: ExchangeCN,
+        code: impl ToString,
+        name: impl ToString,
+        list_date: TimeStamp,
+    ) -> Self {
         let id = Uuid::new_v5(
             &GOOSE_NAMESPACE,
-            format!("{}:{}", exchange, &code).as_bytes(),
+            format!("{}.{}", exchange, code.to_string()).as_bytes(),
         );
         Self {
             id,
             exchange,
-            code,
-            name,
+            code: code.to_string(),
+            name: name.to_string(),
             list_date,
         }
     }

@@ -54,12 +54,33 @@ impl FromStr for TimeStamp {
             return Ok(Self(ts.with_timezone(&Utc)));
         }
 
-        let date = NaiveDate::parse_from_str(value, "%Y-%m-%d")?;
-        let datetime = date
-            .and_hms_opt(0, 0, 0)
-            .ok_or_else(|| Error::data(format!("invalid date: {value}")))?;
+        for format in ["%Y-%m-%d", "%Y%m%d"] {
+            if let Ok(date) = NaiveDate::parse_from_str(value, format) {
+                let datetime = date
+                    .and_hms_opt(0, 0, 0)
+                    .ok_or_else(|| Error::data(format!("invalid date: {value}")))?;
 
-        Ok(Self(DateTime::from_naive_utc_and_offset(datetime, Utc)))
+                return Ok(Self(DateTime::from_naive_utc_and_offset(datetime, Utc)));
+            }
+        }
+
+        Err(Error::data(format!("invalid timestamp: {value}")))
+    }
+}
+
+impl TryFrom<&str> for TimeStamp {
+    type Error = Error;
+
+    fn try_from(value: &str) -> Result<Self> {
+        value.parse()
+    }
+}
+
+impl TryFrom<String> for TimeStamp {
+    type Error = Error;
+
+    fn try_from(value: String) -> Result<Self> {
+        value.parse()
     }
 }
 
