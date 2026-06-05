@@ -70,7 +70,8 @@ impl<'a> DataHandler<'a, DataBase> {
             }
             RestMethod::Post | RestMethod::Put | RestMethod::Patch => {
                 // Body values are bound as SQL parameters inside build_upsert_sql.
-                let (sql, values) = build_upsert_sql(&table, &body)?;
+                let conflict_columns = self.source.primary_key_columns(&table)?;
+                let (sql, values) = build_upsert_sql(&table, &body, &conflict_columns)?;
                 self.source.execute_params(
                     &sql,
                     rusqlite::params_from_iter(values.iter().map(String::as_str)),
@@ -90,7 +91,7 @@ impl<'a> DataHandler<'a, DataBase> {
         let table = iter.next();
         if let Some(table) = table {
             validate_identifier(&table)?;
-            if !self.source.tables()?.contains(&table) {
+            if !self.source.table_exists(&table)? {
                 return Err(Error::db(format!(
                     "404 Not Found: table {} does not exist.",
                     table
@@ -165,7 +166,11 @@ fn build_delete_sql(table: &str, params: &[(String, String)]) -> Result<(String,
 }
 
 // Build a parameterized UPSERT statement from body fields.
-fn build_upsert_sql(table: &str, body: &[(String, String)]) -> Result<(String, Vec<String>)> {
+fn build_upsert_sql(
+    table: &str,
+    body: &[(String, String)],
+    conflict_columns: &[String],
+) -> Result<(String, Vec<String>)> {
     if body.is_empty() {
         return Err(Error::db("400 BadRequest: missing upsert body."));
     }
@@ -178,10 +183,18 @@ fn build_upsert_sql(table: &str, body: &[(String, String)]) -> Result<(String, V
     let placeholders = (1..=body.len())
         .map(|index| format!("?{index}"))
         .collect::<Vec<_>>();
-    let conflict_columns = conflict_columns_for_table(table, &columns)?;
+
+    for column in conflict_columns {
+        if !columns.contains(&column.as_str()) {
+            return Err(Error::db(format!(
+                "400 BadRequest: missing upsert conflict column: {column}."
+            )));
+        }
+    }
+
     let updates = columns
         .iter()
-        .filter(|column| !conflict_columns.contains(column))
+        .filter(|column| !conflict_columns.iter().any(|key| key == **column))
         .map(|column| format!("{column} = excluded.{column}"))
         .collect::<Vec<_>>();
     let conflict_action = if updates.is_empty() {
@@ -198,29 +211,6 @@ fn build_upsert_sql(table: &str, body: &[(String, String)]) -> Result<(String, V
     );
 
     Ok((sql, values))
-}
-
-// Choose the conflict key that matches each known table schema.
-fn conflict_columns_for_table(table: &str, columns: &[&str]) -> Result<Vec<&'static str>> {
-    let conflict_columns = match table {
-        "calendar" => vec!["market", "date"],
-        "daily_bar" => vec!["id", "date", "exchange"],
-        "exchange_cn" | "stock_cn" => vec!["id", "date"],
-        "entity" => vec!["id"],
-        _ if columns.contains(&"id") && columns.contains(&"date") => vec!["id", "date"],
-        _ if columns.contains(&"id") => vec!["id"],
-        _ => return Err(Error::db("400 BadRequest: missing upsert conflict column.")),
-    };
-
-    for column in &conflict_columns {
-        if !columns.contains(column) {
-            return Err(Error::db(format!(
-                "400 BadRequest: missing upsert conflict column: {column}."
-            )));
-        }
-    }
-
-    Ok(conflict_columns)
 }
 
 // Append WHERE clauses with placeholders and return the matching values.

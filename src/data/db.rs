@@ -1,4 +1,4 @@
-use crate::error::Result;
+use crate::error::{Error, Result};
 use rusqlite::{Connection, Params, types::ValueRef};
 use std::collections::HashMap;
 
@@ -39,7 +39,7 @@ impl DataBase {
                 close    TEXT NOT NULL,
                 volume   TEXT NOT NULL,
                 amount   TEXT,
-                qfq      TEXT,
+                adjust   TEXT,
                 PRIMARY KEY (id, date, exchange),
                 FOREIGN KEY (id) REFERENCES entity(id),
                 FOREIGN KEY (exchange, date) REFERENCES calendar(market, date)
@@ -74,6 +74,27 @@ impl DataBase {
         Ok(tables)
     }
 
+    // Check one table name without loading the whole table list.
+    pub fn table_exists(&self, table: &str) -> Result<bool> {
+        validate_identifier(table)?;
+
+        let exists = self.conn.query_row(
+            "
+            SELECT EXISTS (
+                SELECT 1
+                FROM sqlite_schema
+                WHERE type = 'table'
+                  AND name = ?1
+                  AND name NOT LIKE 'sqlite_%'
+            )
+            ",
+            [table],
+            |row| row.get::<_, bool>(0),
+        )?;
+
+        Ok(exists)
+    }
+
     // Execute one parameterized statement and return affected rows.
     pub fn execute_params<P: Params>(&self, sql: &str, params: P) -> Result<usize> {
         let affected = self.conn.execute(sql, params)?;
@@ -105,6 +126,36 @@ impl DataBase {
         let records = rows.collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(records)
     }
+
+    // Read primary key columns from SQLite schema metadata.
+    pub fn primary_key_columns(&self, table: &str) -> Result<Vec<String>> {
+        validate_identifier(table)?;
+
+        let sql = format!("PRAGMA table_info({table})");
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map([], |row| {
+            let name: String = row.get(1)?;
+            let pk_order: i64 = row.get(5)?;
+            Ok((pk_order, name))
+        })?;
+
+        let mut columns = rows
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .filter(|(pk_order, _)| *pk_order > 0)
+            .collect::<Vec<_>>();
+        columns.sort_by_key(|(pk_order, _)| *pk_order);
+
+        let columns = columns
+            .into_iter()
+            .map(|(_, name)| name)
+            .collect::<Vec<_>>();
+        if columns.is_empty() {
+            return Err(Error::db(format!("table has no primary key: {table}")));
+        }
+
+        Ok(columns)
+    }
 }
 
 // Keep database output raw; typed conversion belongs in DataHandler APIs.
@@ -115,5 +166,23 @@ fn sqlite_value_to_string(value: ValueRef<'_>) -> String {
         ValueRef::Real(value) => value.to_string(),
         ValueRef::Text(value) => String::from_utf8_lossy(value).into_owned(),
         ValueRef::Blob(value) => format!("{value:?}"),
+    }
+}
+
+// PRAGMA table_info cannot bind the table name, so keep it strict.
+fn validate_identifier(value: &str) -> Result<()> {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return Err(Error::db("empty SQL identifier"));
+    };
+
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return Err(Error::db(format!("invalid SQL identifier: {value}")));
+    }
+
+    if chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
+        Ok(())
+    } else {
+        Err(Error::db(format!("invalid SQL identifier: {value}")))
     }
 }
