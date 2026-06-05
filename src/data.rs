@@ -3,7 +3,7 @@ use chrono::{DateTime, NaiveDate, SecondsFormat, Utc};
 use rust_decimal::Decimal;
 use std::fmt::{self, Display, Formatter};
 use std::str::FromStr;
-use uuid::Uuid;
+use uuid::{Uuid, uuid};
 
 mod db;
 mod entity;
@@ -12,6 +12,8 @@ mod handler;
 pub use db::DataBase;
 pub use entity::*;
 pub use handler::*;
+
+pub const GOOSE_NAMESPACE: Uuid = uuid::uuid!("8771e211-d0f2-4a12-80fc-8d2b7244a231");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TimeStamp(DateTime<Utc>);
@@ -115,4 +117,9 @@ impl TryFrom<BarRaw> for Bar {
     fn try_from(raw: BarRaw) -> Result<Self> {
         raw.to_bar()
     }
+}
+
+pub enum DataKind {
+    DailyBar,
+    News,
 }

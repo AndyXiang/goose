@@ -17,6 +17,13 @@ impl Error {
             msg: msg.into(),
         }
     }
+
+    pub fn db(msg: impl Into<String>) -> Self {
+        Self {
+            kind: ErrorKind::Db,
+            msg: msg.into(),
+        }
+    }
 }
 
 impl std::fmt::Display for Error {

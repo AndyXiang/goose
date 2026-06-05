@@ -113,7 +113,7 @@ impl Broker for T0Broker {
                 } => {
                     let price = self.slippage(false, price)?;
                     let commision: Decimal = self.commision(price, amount)?;
-                    return Ok(vec![Event::Fill(FillEvent::Sell {
+                    return Ok(vec![Event::Fill(FillEvent::Buy {
                         order,
                         ts: self.date,
                         amount,
