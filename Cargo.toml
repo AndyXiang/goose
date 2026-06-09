@@ -3,12 +3,6 @@ name = "goose"
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
-chrono = { version = "0.4.40", features = [ "std" ] }
-polars = { version = "0.53.0", features = [ "parquet", "lazy", "csv" ] }
-rusqlite = { version = "0.39.0", features = ["bundled"] }
-rust_decimal = "1.40.0"
-serde = "1.0.228"
-tokio = "1.50.0"
-uuid = { version = "1.21.0", features = ["v5"] }
-
+[workspace]
+resolver = "3"
+members = ["goose-db"]
