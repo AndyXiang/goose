@@ -1,0 +1,11 @@
+[package]
+name = "goose"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+chrono = "0.4.45"
+diesel = { version = "2.3.10", features = ["sqlite"] }
+dotenvy = "0.15.7"
+rust_decimal = "1.42.1"
+
