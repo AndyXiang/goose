@@ -3,22 +3,23 @@
 diesel::table! {
     calendar (date) {
         date -> Text,
-        market -> Text,
-        is_open -> Integer,
+        is_open -> Bool,
     }
 }
 
 diesel::table! {
     daily_bars (id) {
         id -> Integer,
-        symbol -> Integer,
+        symbol -> Text,
         date -> Text,
-        open -> Nullable<Integer>,
-        high -> Nullable<Integer>,
-        low -> Nullable<Integer>,
-        close -> Nullable<Integer>,
         is_adjust -> Text,
+        open -> Nullable<BigInt>,
+        high -> Nullable<BigInt>,
+        low -> Nullable<BigInt>,
+        close -> Nullable<BigInt>,
     }
 }
+
+diesel::joinable!(daily_bars -> calendar (date));
 
 diesel::allow_tables_to_appear_in_same_query!(calendar, daily_bars,);
