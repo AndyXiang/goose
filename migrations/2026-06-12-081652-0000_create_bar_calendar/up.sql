@@ -1,6 +1,4 @@
 -- Your SQL goes here
-PRAGMA foreign_keys = ON;
-
 CREATE TABLE calendar (
     date TEXT NOT NULL PRIMARY KEY
         CHECK (

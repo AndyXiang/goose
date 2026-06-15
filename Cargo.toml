@@ -6,6 +6,6 @@ edition = "2024"
 [dependencies]
 chrono = "0.4.45"
 diesel = { version = "2.3.10", features = ["sqlite"] }
+diesel_migrations = "2.3.2"
 rust_decimal = "1.42.1"
 thiserror = "2.0.18"
-

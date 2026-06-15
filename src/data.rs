@@ -1,12 +1,16 @@
-use crate::error::Error;
+use crate::error::{Error, Result};
 use chrono::NaiveDate;
 use diesel::{
-    AsExpression, Connection, FromSqlRow, Queryable, Selectable, SqliteConnection,
+    AsExpression, Connection, FromSqlRow, Queryable, Selectable, SelectableHelper,
+    SqliteConnection,
+    connection::SimpleConnection,
     deserialize::{self, FromSql},
+    prelude::{ExpressionMethods, OptionalExtension, QueryDsl, RunQueryDsl},
     serialize::{self, IsNull, Output, ToSql},
     sql_types::{BigInt, Text},
     sqlite::{Sqlite, SqliteValue},
 };
+use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 use rust_decimal::{Decimal, prelude::ToPrimitive};
 use std::{
     fmt,
@@ -14,15 +18,177 @@ use std::{
     str::FromStr,
 };
 
+const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
+
 pub struct DataBase {
     pub conn: SqliteConnection,
 }
 
 impl DataBase {
     pub fn new(path: &str) -> Self {
-        let conn = SqliteConnection::establish(path)
+        let mut conn = SqliteConnection::establish(path)
             .unwrap_or_else(|_| panic!("Fail connecting to {}", path));
+
+        conn.run_pending_migrations(MIGRATIONS)
+            .unwrap_or_else(|error| panic!("Fail running database migrations: {error}"));
+        conn.batch_execute("PRAGMA foreign_keys = ON;")
+            .unwrap_or_else(|error| panic!("Fail enabling SQLite foreign keys: {error}"));
+
         Self { conn }
+    }
+
+    /// Returns whether `query_date` is open according to the trading calendar.
+    ///
+    /// Returns [`Error::MissingCalendarDate`] when the calendar has no entry for the date.
+    pub fn is_trading_day(&mut self, query_date: Date) -> Result<bool> {
+        use crate::schema::calendar;
+
+        calendar::table
+            .filter(calendar::date.eq(query_date))
+            .select(calendar::is_open)
+            .first::<bool>(&mut self.conn)
+            .optional()?
+            .ok_or_else(|| Error::MissingCalendarDate(query_date.to_string()))
+    }
+
+    /// Returns open trading dates in the inclusive interval `[start, end]`.
+    ///
+    /// Dates are ordered ascending. An interval with no open dates returns an empty vector.
+    /// Returns [`Error::InvalidDateInterval`] when `start` is after `end`.
+    pub fn get_trading_days(&mut self, start: Date, end: Date) -> Result<Vec<Date>> {
+        use crate::schema::calendar;
+
+        if start > end {
+            return Err(Error::InvalidDateInterval {
+                start: start.to_string(),
+                end: end.to_string(),
+            });
+        }
+
+        calendar::table
+            .filter(calendar::date.ge(start))
+            .filter(calendar::date.le(end))
+            .filter(calendar::is_open.eq(true))
+            .select(calendar::date)
+            .order(calendar::date.asc())
+            .load::<Date>(&mut self.conn)
+            .map_err(Into::into)
+    }
+
+    /// Returns the earliest open trading date strictly after `query_date`.
+    ///
+    /// Returns [`Error::MissingTradingDayAfter`] when the calendar contains no later open date.
+    pub fn first_trading_day_after(&mut self, query_date: Date) -> Result<Date> {
+        use crate::schema::calendar;
+
+        calendar::table
+            .filter(calendar::date.gt(query_date))
+            .filter(calendar::is_open.eq(true))
+            .select(calendar::date)
+            .order(calendar::date.asc())
+            .first::<Date>(&mut self.conn)
+            .optional()?
+            .ok_or_else(|| Error::MissingTradingDayAfter(query_date.to_string()))
+    }
+
+    /// Returns the latest open trading date strictly before `query_date`.
+    ///
+    /// Returns [`Error::MissingTradingDayBefore`] when the calendar contains no earlier open date.
+    pub fn last_trading_day_before(&mut self, query_date: Date) -> Result<Date> {
+        use crate::schema::calendar;
+
+        calendar::table
+            .filter(calendar::date.lt(query_date))
+            .filter(calendar::is_open.eq(true))
+            .select(calendar::date)
+            .order(calendar::date.desc())
+            .first::<Date>(&mut self.conn)
+            .optional()?
+            .ok_or_else(|| Error::MissingTradingDayBefore(query_date.to_string()))
+    }
+
+    /// Returns all distinct symbols that have stored bars, ordered ascending.
+    pub fn available_symbols(&mut self) -> Result<Vec<String>> {
+        use crate::schema::daily_bars;
+
+        daily_bars::table
+            .select(daily_bars::symbol)
+            .distinct()
+            .order(daily_bars::symbol.asc())
+            .load::<String>(&mut self.conn)
+            .map_err(Into::into)
+    }
+
+    /// Returns one bar identified by symbol, date, and adjustment basis.
+    ///
+    /// Returns [`Error::Database`] containing Diesel's `NotFound` error when no matching bar
+    /// exists.
+    pub fn get_bar(
+        &mut self,
+        symbol: &str,
+        query_date: Date,
+        adjustment: PriceAdjust,
+    ) -> Result<DateBar> {
+        use crate::schema::daily_bars;
+
+        daily_bars::table
+            .filter(daily_bars::symbol.eq(symbol))
+            .filter(daily_bars::date.eq(query_date))
+            .filter(daily_bars::is_adjust.eq(adjustment))
+            .select(DateBar::as_select())
+            .first::<DateBar>(&mut self.conn)
+            .map_err(Into::into)
+    }
+
+    /// Returns all symbols with bars on `query_date` for one adjustment basis.
+    ///
+    /// Bars are ordered by symbol. No matches returns an empty vector.
+    pub fn get_cross_section(
+        &mut self,
+        query_date: Date,
+        adjustment: PriceAdjust,
+    ) -> Result<Vec<DateBar>> {
+        use crate::schema::daily_bars;
+
+        daily_bars::table
+            .filter(daily_bars::date.eq(query_date))
+            .filter(daily_bars::is_adjust.eq(adjustment))
+            .select(DateBar::as_select())
+            .order(daily_bars::symbol.asc())
+            .load::<DateBar>(&mut self.conn)
+            .map_err(Into::into)
+    }
+
+    /// Returns one symbol's bars in the inclusive interval `[start, end]`.
+    ///
+    /// Bars are filtered to one adjustment basis and ordered by date ascending. No matches
+    /// returns an empty vector. Returns [`Error::InvalidDateInterval`] when `start` is after
+    /// `end`.
+    pub fn get_history(
+        &mut self,
+        symbol: &str,
+        start: Date,
+        end: Date,
+        adjustment: PriceAdjust,
+    ) -> Result<Vec<DateBar>> {
+        use crate::schema::daily_bars;
+
+        if start > end {
+            return Err(Error::InvalidDateInterval {
+                start: start.to_string(),
+                end: end.to_string(),
+            });
+        }
+
+        daily_bars::table
+            .filter(daily_bars::symbol.eq(symbol))
+            .filter(daily_bars::date.ge(start))
+            .filter(daily_bars::date.le(end))
+            .filter(daily_bars::is_adjust.eq(adjustment))
+            .select(DateBar::as_select())
+            .order(daily_bars::date.asc())
+            .load::<DateBar>(&mut self.conn)
+            .map_err(Into::into)
     }
     //
     // pub fn new_in_memory() -> Self {
@@ -36,7 +202,7 @@ impl DataBase {
 pub struct Date(NaiveDate);
 
 impl Date {
-    pub fn from_ymd(year: i32, month: u32, day: u32) -> Result<Self, Error> {
+    pub fn from_ymd(year: i32, month: u32, day: u32) -> Result<Self> {
         NaiveDate::from_ymd_opt(year, month, day)
             .map(Self)
             .ok_or_else(|| Error::InvalidDate(format!("{year:04}-{month:02}-{day:02}")))
@@ -72,7 +238,7 @@ impl AsRef<NaiveDate> for Date {
 impl FromStr for Date {
     type Err = Error;
 
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
+    fn from_str(value: &str) -> Result<Self> {
         NaiveDate::parse_from_str(value, "%Y-%m-%d")
             .map(Self)
             .map_err(|_| Error::InvalidDate(String::from(value)))
@@ -145,7 +311,7 @@ impl Price {
 impl TryFrom<Decimal> for Price {
     type Error = Error;
 
-    fn try_from(value: Decimal) -> Result<Self, Self::Error> {
+    fn try_from(value: Decimal) -> Result<Self> {
         let scaled = value
             .checked_mul(Decimal::from(PRICE_MULTIPLIER))
             .ok_or_else(|| Error::InvalidData("price is too large to store".into()))?;
@@ -175,7 +341,7 @@ impl From<Price> for Decimal {
 impl FromStr for Price {
     type Err = Error;
 
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
+    fn from_str(value: &str) -> Result<Self> {
         let value = Decimal::from_str(value)
             .map_err(|error| Error::InvalidData(format!("invalid price: {error}")))?;
         Self::try_from(value)
@@ -273,7 +439,7 @@ pub enum PriceAdjust {
 impl FromStr for PriceAdjust {
     type Err = Error;
 
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
+    fn from_str(value: &str) -> Result<Self> {
         match value {
             "raw" => Ok(Self::Raw),
             "qfq" => Ok(Self::Qfq),
@@ -309,7 +475,7 @@ impl ToSql<Text, Sqlite> for PriceAdjust {
     }
 }
 
-#[derive(Queryable, Selectable)]
+#[derive(Debug, Clone, PartialEq, Eq, Queryable, Selectable)]
 #[diesel(table_name = crate::schema::daily_bars)]
 #[diesel(check_for_backend(diesel::sqlite::Sqlite))]
 pub struct DateBar {
