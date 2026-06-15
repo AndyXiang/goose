@@ -1,6 +1,28 @@
+use std::collections::VecDeque;
+
 use diesel::{Connection, SqliteConnection, connection::SimpleConnection};
-use goose::data::{CalendarEntry, DataBase, Date, DateBar, PriceAdjust};
-use goose::error::{Error, LookupError};
+use goose::data::{CalendarEntry, DataBase, Date, DateBar, Fetcher, Persistable, PriceAdjust};
+use goose::error::{Error, FetchError, LookupError, Result};
+
+struct BatchFetcher<T> {
+    batches: VecDeque<Vec<T>>,
+}
+
+impl<T> BatchFetcher<T> {
+    fn new(batches: Vec<Vec<T>>) -> Self {
+        Self {
+            batches: batches.into(),
+        }
+    }
+}
+
+impl<T: Persistable> Fetcher for BatchFetcher<T> {
+    type Item = T;
+
+    fn fetch(&mut self) -> Result<Option<Vec<Self::Item>>> {
+        Ok(self.batches.pop_front())
+    }
+}
 
 fn database_with_calendar() -> DataBase {
     let mut conn = SqliteConnection::establish(":memory:").unwrap();
@@ -154,6 +176,108 @@ fn empty_insert_and_upsert_batches_are_noops() {
     assert_eq!(database.upsert_calendar(&[]).unwrap(), 0);
     assert_eq!(database.insert_bars(&[]).unwrap(), 0);
     assert_eq!(database.upsert_bars(&[]).unwrap(), 0);
+}
+
+#[test]
+fn insert_from_persists_all_fetched_batches() {
+    let mut database = DataBase::new(":memory:");
+    let mut fetcher = BatchFetcher::new(vec![
+        vec![CalendarEntry {
+            date: "2026-06-15".parse().unwrap(),
+            is_open: true,
+        }],
+        vec![CalendarEntry {
+            date: "2026-06-16".parse().unwrap(),
+            is_open: false,
+        }],
+    ]);
+
+    assert_eq!(database.insert_from(&mut fetcher).unwrap(), 2);
+    assert!(
+        database
+            .is_trading_day("2026-06-15".parse().unwrap())
+            .unwrap()
+    );
+    assert!(
+        !database
+            .is_trading_day("2026-06-16".parse().unwrap())
+            .unwrap()
+    );
+}
+
+#[test]
+fn upsert_from_uses_the_items_conflict_policy() {
+    let mut database = DataBase::new(":memory:");
+    let date: Date = "2026-06-15".parse().unwrap();
+    database
+        .insert_calendar(&[CalendarEntry {
+            date,
+            is_open: true,
+        }])
+        .unwrap();
+    database
+        .insert_bars(&[bar("AAPL", "2026-06-15", "10")])
+        .unwrap();
+    let mut fetcher = BatchFetcher::new(vec![vec![bar("AAPL", "2026-06-15", "12.5")]]);
+
+    assert_eq!(database.upsert_from(&mut fetcher).unwrap(), 1);
+    assert_eq!(
+        database
+            .get_bar("AAPL", date, PriceAdjust::Raw)
+            .unwrap()
+            .close
+            .unwrap()
+            .to_string(),
+        "12.5000"
+    );
+}
+
+#[test]
+fn persist_from_rejects_an_empty_fetch_batch() {
+    let mut database = DataBase::new(":memory:");
+    let mut fetcher = BatchFetcher::<CalendarEntry>::new(vec![vec![]]);
+
+    let error = database.insert_from(&mut fetcher).unwrap_err();
+
+    assert!(matches!(error, Error::Fetch(FetchError::EmptyBatch)));
+}
+
+struct FailingFetcher {
+    fetch_count: usize,
+}
+
+impl Fetcher for FailingFetcher {
+    type Item = CalendarEntry;
+
+    fn fetch(&mut self) -> Result<Option<Vec<Self::Item>>> {
+        self.fetch_count += 1;
+        if self.fetch_count == 1 {
+            return Ok(Some(vec![CalendarEntry {
+                date: "2026-06-15".parse().unwrap(),
+                is_open: true,
+            }]));
+        }
+
+        Err(FetchError::InvalidField {
+            row: 2,
+            field: "is_open",
+            value: "invalid".into(),
+        }
+        .into())
+    }
+}
+
+#[test]
+fn persist_from_keeps_batches_committed_before_a_later_fetch_error() {
+    let mut database = DataBase::new(":memory:");
+    let mut fetcher = FailingFetcher { fetch_count: 0 };
+
+    assert!(database.insert_from(&mut fetcher).is_err());
+    assert!(
+        database
+            .is_trading_day("2026-06-15".parse().unwrap())
+            .unwrap()
+    );
 }
 
 #[test]

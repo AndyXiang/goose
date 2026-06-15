@@ -36,6 +36,8 @@ pub enum ValidationError {
 pub enum FetchError {
     #[error("CSV error: {0}")]
     Csv(#[from] csv::Error),
+    #[error("fetcher returned an empty batch; return None when exhausted")]
+    EmptyBatch,
     #[error("invalid CSV headers: expected {expected}, found {actual}")]
     InvalidHeaders { expected: String, actual: String },
     #[error("invalid CSV record at row {row}: {source}")]

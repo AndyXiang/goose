@@ -129,6 +129,43 @@ impl DataBase {
             .map_err(Into::into)
     }
 
+    /// Fetches batches and inserts every item, returning the total affected row count.
+    ///
+    /// Each successful batch is committed before the next batch is fetched. If a later fetch or
+    /// insert fails, rows from earlier batches remain stored.
+    pub fn insert_from<F>(&mut self, fetcher: &mut F) -> Result<usize>
+    where
+        F: Fetcher,
+    {
+        self.persist_from(fetcher, F::Item::insert_batch)
+    }
+
+    /// Fetches batches and upserts every item, returning the total affected row count.
+    ///
+    /// The item's [`Persistable`] implementation defines its conflict key and update behavior.
+    /// Each successful batch is committed before the next batch is fetched.
+    pub fn upsert_from<F>(&mut self, fetcher: &mut F) -> Result<usize>
+    where
+        F: Fetcher,
+    {
+        self.persist_from(fetcher, F::Item::upsert_batch)
+    }
+
+    fn persist_from<F, P>(&mut self, fetcher: &mut F, mut persist: P) -> Result<usize>
+    where
+        F: Fetcher,
+        P: FnMut(&mut Self, &[F::Item]) -> Result<usize>,
+    {
+        let mut total = 0;
+        while let Some(batch) = fetcher.fetch()? {
+            if batch.is_empty() {
+                return Err(FetchError::EmptyBatch.into());
+            }
+            total += persist(self, &batch)?;
+        }
+        Ok(total)
+    }
+
     /// Returns whether `query_date` is open according to the trading calendar.
     ///
     /// Returns [`LookupError::CalendarDate`] when the calendar has no entry for the date.
@@ -622,8 +659,39 @@ pub struct CalendarEntry {
     pub is_open: bool,
 }
 
+/// A fetched model that can be persisted by [`DataBase`].
+///
+/// This bound is stronger than Diesel's [`Insertable`] derive because an upsert also needs a
+/// model-specific conflict key and update policy.
+pub trait Persistable: Sized {
+    fn insert_batch(database: &mut DataBase, items: &[Self]) -> Result<usize>;
+    fn upsert_batch(database: &mut DataBase, items: &[Self]) -> Result<usize>;
+}
+
+impl Persistable for DateBar {
+    fn insert_batch(database: &mut DataBase, items: &[Self]) -> Result<usize> {
+        database.insert_bars(items)
+    }
+
+    fn upsert_batch(database: &mut DataBase, items: &[Self]) -> Result<usize> {
+        database.upsert_bars(items)
+    }
+}
+
+impl Persistable for CalendarEntry {
+    fn insert_batch(database: &mut DataBase, items: &[Self]) -> Result<usize> {
+        database.insert_calendar(items)
+    }
+
+    fn upsert_batch(database: &mut DataBase, items: &[Self]) -> Result<usize> {
+        database.upsert_calendar(items)
+    }
+}
+
 pub trait Fetcher {
-    type Item;
+    type Item: Persistable;
+
+    /// Returns the next non-empty batch, or `None` when the source is exhausted.
     fn fetch(&mut self) -> Result<Option<Vec<Self::Item>>>;
 }
 
