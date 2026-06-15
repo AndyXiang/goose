@@ -1,7 +1,10 @@
-use crate::error::{Error, Result};
+use crate::{
+    error::{FetchError, LookupError, Result, ValidationError},
+    schema,
+};
 use chrono::NaiveDate;
 use diesel::{
-    AsExpression, Connection, FromSqlRow, Queryable, Selectable, SelectableHelper,
+    AsExpression, Connection, FromSqlRow, Insertable, Queryable, Selectable, SelectableHelper,
     SqliteConnection,
     connection::SimpleConnection,
     deserialize::{self, FromSql},
@@ -9,12 +12,16 @@ use diesel::{
     serialize::{self, IsNull, Output, ToSql},
     sql_types::{BigInt, Text},
     sqlite::{Sqlite, SqliteValue},
+    upsert::excluded,
 };
 use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 use rust_decimal::{Decimal, prelude::ToPrimitive};
 use std::{
     fmt,
+    fs::File,
+    io::Read,
     ops::{Add, AddAssign, Div, Mul, Sub, SubAssign},
+    path::Path,
     str::FromStr,
 };
 
@@ -37,9 +44,94 @@ impl DataBase {
         Self { conn }
     }
 
+    /// Inserts calendar entries and returns the number of inserted rows.
+    ///
+    /// Duplicate dates produce a database constraint error. Empty input returns zero.
+    pub fn insert_calendar(&mut self, entries: &[CalendarEntry]) -> Result<usize> {
+        if entries.is_empty() {
+            return Ok(0);
+        }
+
+        diesel::insert_into(schema::calendar::table)
+            .values(entries)
+            .execute(&mut self.conn)
+            .map_err(Into::into)
+    }
+
+    /// Inserts calendar entries or updates `is_open` when a date already exists.
+    ///
+    /// Empty input returns zero.
+    pub fn upsert_calendar(&mut self, entries: &[CalendarEntry]) -> Result<usize> {
+        if entries.is_empty() {
+            return Ok(0);
+        }
+
+        self.conn
+            .transaction::<usize, diesel::result::Error, _>(|conn| {
+                entries.iter().try_fold(0, |total, entry| {
+                    diesel::insert_into(schema::calendar::table)
+                        .values(entry)
+                        .on_conflict(schema::calendar::date)
+                        .do_update()
+                        .set(schema::calendar::is_open.eq(excluded(schema::calendar::is_open)))
+                        .execute(conn)
+                        .map(|count| total + count)
+                })
+            })
+            .map_err(Into::into)
+    }
+
+    /// Inserts bars and returns the number of inserted rows.
+    ///
+    /// Duplicate `(symbol, date, is_adjust)` keys produce a database constraint error. Calendar
+    /// entries for all bar dates must already exist. Empty input returns zero.
+    pub fn insert_bars(&mut self, bars: &[DateBar]) -> Result<usize> {
+        if bars.is_empty() {
+            return Ok(0);
+        }
+
+        diesel::insert_into(schema::daily_bars::table)
+            .values(bars)
+            .execute(&mut self.conn)
+            .map_err(Into::into)
+    }
+
+    /// Inserts bars or updates OHLC values when their business key already exists.
+    ///
+    /// The conflict key is `(symbol, date, is_adjust)`. Calendar entries for all bar dates must
+    /// already exist. Empty input returns zero.
+    pub fn upsert_bars(&mut self, bars: &[DateBar]) -> Result<usize> {
+        if bars.is_empty() {
+            return Ok(0);
+        }
+
+        self.conn
+            .transaction::<usize, diesel::result::Error, _>(|conn| {
+                bars.iter().try_fold(0, |total, bar| {
+                    diesel::insert_into(schema::daily_bars::table)
+                        .values(bar)
+                        .on_conflict((
+                            schema::daily_bars::symbol,
+                            schema::daily_bars::date,
+                            schema::daily_bars::is_adjust,
+                        ))
+                        .do_update()
+                        .set((
+                            schema::daily_bars::open.eq(excluded(schema::daily_bars::open)),
+                            schema::daily_bars::high.eq(excluded(schema::daily_bars::high)),
+                            schema::daily_bars::low.eq(excluded(schema::daily_bars::low)),
+                            schema::daily_bars::close.eq(excluded(schema::daily_bars::close)),
+                        ))
+                        .execute(conn)
+                        .map(|count| total + count)
+                })
+            })
+            .map_err(Into::into)
+    }
+
     /// Returns whether `query_date` is open according to the trading calendar.
     ///
-    /// Returns [`Error::MissingCalendarDate`] when the calendar has no entry for the date.
+    /// Returns [`LookupError::CalendarDate`] when the calendar has no entry for the date.
     pub fn is_trading_day(&mut self, query_date: Date) -> Result<bool> {
         use crate::schema::calendar;
 
@@ -48,22 +140,17 @@ impl DataBase {
             .select(calendar::is_open)
             .first::<bool>(&mut self.conn)
             .optional()?
-            .ok_or_else(|| Error::MissingCalendarDate(query_date.to_string()))
+            .ok_or_else(|| LookupError::CalendarDate { date: query_date }.into())
     }
 
     /// Returns open trading dates in the inclusive interval `[start, end]`.
     ///
     /// Dates are ordered ascending. An interval with no open dates returns an empty vector.
-    /// Returns [`Error::InvalidDateInterval`] when `start` is after `end`.
+    /// Panics when `start` is after `end`.
     pub fn get_trading_days(&mut self, start: Date, end: Date) -> Result<Vec<Date>> {
         use crate::schema::calendar;
 
-        if start > end {
-            return Err(Error::InvalidDateInterval {
-                start: start.to_string(),
-                end: end.to_string(),
-            });
-        }
+        assert!(start <= end, "start date {start} is after end date {end}");
 
         calendar::table
             .filter(calendar::date.ge(start))
@@ -75,10 +162,8 @@ impl DataBase {
             .map_err(Into::into)
     }
 
-    /// Returns the earliest open trading date strictly after `query_date`.
-    ///
-    /// Returns [`Error::MissingTradingDayAfter`] when the calendar contains no later open date.
-    pub fn first_trading_day_after(&mut self, query_date: Date) -> Result<Date> {
+    /// Returns the earliest open trading date strictly after `query_date`, if one exists.
+    pub fn first_trading_day_after(&mut self, query_date: Date) -> Result<Option<Date>> {
         use crate::schema::calendar;
 
         calendar::table
@@ -87,14 +172,12 @@ impl DataBase {
             .select(calendar::date)
             .order(calendar::date.asc())
             .first::<Date>(&mut self.conn)
-            .optional()?
-            .ok_or_else(|| Error::MissingTradingDayAfter(query_date.to_string()))
+            .optional()
+            .map_err(Into::into)
     }
 
-    /// Returns the latest open trading date strictly before `query_date`.
-    ///
-    /// Returns [`Error::MissingTradingDayBefore`] when the calendar contains no earlier open date.
-    pub fn last_trading_day_before(&mut self, query_date: Date) -> Result<Date> {
+    /// Returns the latest open trading date strictly before `query_date`, if one exists.
+    pub fn last_trading_day_before(&mut self, query_date: Date) -> Result<Option<Date>> {
         use crate::schema::calendar;
 
         calendar::table
@@ -103,8 +186,8 @@ impl DataBase {
             .select(calendar::date)
             .order(calendar::date.desc())
             .first::<Date>(&mut self.conn)
-            .optional()?
-            .ok_or_else(|| Error::MissingTradingDayBefore(query_date.to_string()))
+            .optional()
+            .map_err(Into::into)
     }
 
     /// Returns all distinct symbols that have stored bars, ordered ascending.
@@ -121,8 +204,7 @@ impl DataBase {
 
     /// Returns one bar identified by symbol, date, and adjustment basis.
     ///
-    /// Returns [`Error::Database`] containing Diesel's `NotFound` error when no matching bar
-    /// exists.
+    /// Returns [`LookupError::Bar`] when no matching bar exists.
     pub fn get_bar(
         &mut self,
         symbol: &str,
@@ -137,7 +219,15 @@ impl DataBase {
             .filter(daily_bars::is_adjust.eq(adjustment))
             .select(DateBar::as_select())
             .first::<DateBar>(&mut self.conn)
-            .map_err(Into::into)
+            .optional()?
+            .ok_or_else(|| {
+                LookupError::Bar {
+                    symbol: symbol.to_owned(),
+                    date: query_date,
+                    adjustment,
+                }
+                .into()
+            })
     }
 
     /// Returns all symbols with bars on `query_date` for one adjustment basis.
@@ -162,8 +252,7 @@ impl DataBase {
     /// Returns one symbol's bars in the inclusive interval `[start, end]`.
     ///
     /// Bars are filtered to one adjustment basis and ordered by date ascending. No matches
-    /// returns an empty vector. Returns [`Error::InvalidDateInterval`] when `start` is after
-    /// `end`.
+    /// returns an empty vector. Panics when `start` is after `end`.
     pub fn get_history(
         &mut self,
         symbol: &str,
@@ -173,12 +262,7 @@ impl DataBase {
     ) -> Result<Vec<DateBar>> {
         use crate::schema::daily_bars;
 
-        if start > end {
-            return Err(Error::InvalidDateInterval {
-                start: start.to_string(),
-                end: end.to_string(),
-            });
-        }
+        assert!(start <= end, "start date {start} is after end date {end}");
 
         daily_bars::table
             .filter(daily_bars::symbol.eq(symbol))
@@ -202,10 +286,12 @@ impl DataBase {
 pub struct Date(NaiveDate);
 
 impl Date {
-    pub fn from_ymd(year: i32, month: u32, day: u32) -> Result<Self> {
+    pub fn from_ymd(year: i32, month: u32, day: u32) -> std::result::Result<Self, ValidationError> {
         NaiveDate::from_ymd_opt(year, month, day)
             .map(Self)
-            .ok_or_else(|| Error::InvalidDate(format!("{year:04}-{month:02}-{day:02}")))
+            .ok_or_else(|| ValidationError::Date {
+                value: format!("{year:04}-{month:02}-{day:02}"),
+            })
     }
 
     pub const fn as_naive_date(&self) -> &NaiveDate {
@@ -236,12 +322,14 @@ impl AsRef<NaiveDate> for Date {
 }
 
 impl FromStr for Date {
-    type Err = Error;
+    type Err = ValidationError;
 
-    fn from_str(value: &str) -> Result<Self> {
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
         NaiveDate::parse_from_str(value, "%Y-%m-%d")
             .map(Self)
-            .map_err(|_| Error::InvalidDate(String::from(value)))
+            .map_err(|_| ValidationError::Date {
+                value: value.to_owned(),
+            })
     }
 }
 
@@ -309,22 +397,24 @@ impl Price {
 }
 
 impl TryFrom<Decimal> for Price {
-    type Error = Error;
+    type Error = ValidationError;
 
-    fn try_from(value: Decimal) -> Result<Self> {
+    fn try_from(value: Decimal) -> std::result::Result<Self, Self::Error> {
         let scaled = value
             .checked_mul(Decimal::from(PRICE_MULTIPLIER))
-            .ok_or_else(|| Error::InvalidData("price is too large to store".into()))?;
+            .ok_or_else(|| ValidationError::Price {
+                reason: "value is too large to store".into(),
+            })?;
 
         if !scaled.fract().is_zero() {
-            return Err(Error::InvalidData(
-                "price has more than four decimal places".into(),
-            ));
+            return Err(ValidationError::Price {
+                reason: "value has more than four decimal places".into(),
+            });
         }
 
-        scaled
-            .to_i64()
-            .ok_or_else(|| Error::InvalidData("price is outside SQLite BIGINT range".into()))?;
+        scaled.to_i64().ok_or_else(|| ValidationError::Price {
+            reason: "value is outside SQLite BIGINT range".into(),
+        })?;
 
         let mut value = value;
         value.rescale(PRICE_SCALE);
@@ -339,11 +429,12 @@ impl From<Price> for Decimal {
 }
 
 impl FromStr for Price {
-    type Err = Error;
+    type Err = ValidationError;
 
-    fn from_str(value: &str) -> Result<Self> {
-        let value = Decimal::from_str(value)
-            .map_err(|error| Error::InvalidData(format!("invalid price: {error}")))?;
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        let value = Decimal::from_str(value).map_err(|error| ValidationError::Price {
+            reason: error.to_string(),
+        })?;
         Self::try_from(value)
     }
 }
@@ -422,7 +513,9 @@ impl ToSql<BigInt, Sqlite> for Price {
     fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Sqlite>) -> serialize::Result {
         let value = self
             .as_stored_integer()
-            .ok_or_else(|| Error::InvalidData("price is outside SQLite BIGINT range".into()))?;
+            .ok_or_else(|| ValidationError::Price {
+                reason: "value is outside SQLite BIGINT range".into(),
+            })?;
         out.set_value(value);
         Ok(IsNull::No)
     }
@@ -437,16 +530,16 @@ pub enum PriceAdjust {
 }
 
 impl FromStr for PriceAdjust {
-    type Err = Error;
+    type Err = ValidationError;
 
-    fn from_str(value: &str) -> Result<Self> {
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
         match value {
             "raw" => Ok(Self::Raw),
             "qfq" => Ok(Self::Qfq),
             "hfq" => Ok(Self::Hfq),
-            value => Err(Error::InvalidData(format!(
-                "unknown price adjustment: {value}"
-            ))),
+            value => Err(ValidationError::PriceAdjust {
+                value: value.to_owned(),
+            }),
         }
     }
 }
@@ -475,9 +568,10 @@ impl ToSql<Text, Sqlite> for PriceAdjust {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Queryable, Selectable)]
+#[derive(Debug, Clone, PartialEq, Eq, Queryable, Selectable, Insertable)]
 #[diesel(table_name = crate::schema::daily_bars)]
 #[diesel(check_for_backend(diesel::sqlite::Sqlite))]
+#[diesel(treat_none_as_default_value = false)]
 pub struct DateBar {
     pub date: Date,
     pub symbol: String,
@@ -486,4 +580,310 @@ pub struct DateBar {
     pub low: Option<Price>,
     pub close: Option<Price>,
     pub is_adjust: PriceAdjust,
+}
+
+impl DateBar {
+    /// Creates a bar after validating its symbol and OHLC relationships.
+    ///
+    /// Empty symbols are rejected. When the relevant prices are present, `low` must not exceed
+    /// `high`, and `open` and `close` must lie within the inclusive `[low, high]` range.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        symbol: impl Into<String>,
+        date: Date,
+        adjustment: PriceAdjust,
+        open: Option<Price>,
+        high: Option<Price>,
+        low: Option<Price>,
+        close: Option<Price>,
+    ) -> std::result::Result<Self, ValidationError> {
+        let symbol = symbol.into();
+        if symbol.trim().is_empty() {
+            return Err(ValidationError::EmptySymbol);
+        }
+
+        validate_ohlc(open, high, low, close)?;
+        Ok(Self {
+            symbol,
+            date,
+            is_adjust: adjustment,
+            open,
+            high,
+            low,
+            close,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Insertable)]
+#[diesel(table_name = schema::calendar)]
+pub struct CalendarEntry {
+    pub date: Date,
+    pub is_open: bool,
+}
+
+pub trait Fetcher {
+    type Item;
+    fn fetch(&mut self) -> Result<Option<Vec<Self::Item>>>;
+}
+
+pub struct CsvBarFetcher<R: Read> {
+    reader: csv::Reader<R>,
+    batch_size: usize,
+    finished: bool,
+}
+
+impl<R: Read> CsvBarFetcher<R> {
+    /// Creates a batched bar fetcher from a CSV reader.
+    ///
+    /// The CSV must contain the headers `symbol,date,is_adjust,open,high,low,close` in that
+    /// order. Empty OHLC fields are returned as `None`.
+    pub fn from_reader(reader: R, batch_size: usize) -> Result<Self> {
+        let reader = csv::ReaderBuilder::new()
+            .trim(csv::Trim::All)
+            .from_reader(reader);
+        Self::from_csv_reader(reader, batch_size)
+    }
+
+    fn from_csv_reader(mut reader: csv::Reader<R>, batch_size: usize) -> Result<Self> {
+        assert!(
+            batch_size > 0,
+            "CSV fetcher batch size must be greater than zero"
+        );
+
+        const HEADERS: [&str; 7] = [
+            "symbol",
+            "date",
+            "is_adjust",
+            "open",
+            "high",
+            "low",
+            "close",
+        ];
+        let headers = reader.headers()?;
+        if !headers.iter().eq(HEADERS) {
+            return Err(FetchError::InvalidHeaders {
+                expected: HEADERS.join(","),
+                actual: headers.iter().collect::<Vec<_>>().join(","),
+            }
+            .into());
+        }
+
+        Ok(Self {
+            reader,
+            batch_size,
+            finished: false,
+        })
+    }
+
+    fn parse_record(record: &csv::StringRecord) -> Result<DateBar> {
+        let row = record.position().map_or(0, csv::Position::line);
+        let parse_price = |index: usize, name: &'static str| -> Result<Option<Price>> {
+            let value = csv_field(record, row, index, name)?;
+            if value.is_empty() {
+                return Ok(None);
+            }
+            value
+                .parse()
+                .map(Some)
+                .map_err(|source| FetchError::InvalidRecord { row, source }.into())
+        };
+
+        DateBar::new(
+            csv_field(record, row, 0, "symbol")?,
+            csv_field(record, row, 1, "date")?
+                .parse()
+                .map_err(|source| FetchError::InvalidRecord { row, source })?,
+            csv_field(record, row, 2, "is_adjust")?
+                .parse()
+                .map_err(|source| FetchError::InvalidRecord { row, source })?,
+            parse_price(3, "open")?,
+            parse_price(4, "high")?,
+            parse_price(5, "low")?,
+            parse_price(6, "close")?,
+        )
+        .map_err(|source| FetchError::InvalidRecord { row, source }.into())
+    }
+}
+
+impl CsvBarFetcher<File> {
+    /// Opens a CSV file and creates a batched bar fetcher.
+    pub fn from_path(path: impl AsRef<Path>, batch_size: usize) -> Result<Self> {
+        let reader = csv::ReaderBuilder::new()
+            .trim(csv::Trim::All)
+            .from_path(path)?;
+        Self::from_csv_reader(reader, batch_size)
+    }
+}
+
+impl<R: Read> Fetcher for CsvBarFetcher<R> {
+    type Item = DateBar;
+
+    fn fetch(&mut self) -> Result<Option<Vec<Self::Item>>> {
+        if self.finished {
+            return Ok(None);
+        }
+
+        let mut batch = Vec::with_capacity(self.batch_size);
+        let mut record = csv::StringRecord::new();
+        while batch.len() < self.batch_size {
+            if !self.reader.read_record(&mut record)? {
+                self.finished = true;
+                break;
+            }
+            batch.push(Self::parse_record(&record)?);
+        }
+
+        if batch.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(batch))
+        }
+    }
+}
+
+pub struct CsvCalendarFetcher<R: Read> {
+    reader: csv::Reader<R>,
+    batch_size: usize,
+    finished: bool,
+}
+
+impl<R: Read> CsvCalendarFetcher<R> {
+    /// Creates a batched calendar fetcher from a CSV reader.
+    ///
+    /// The CSV must contain the headers `date,is_open` in that order. `is_open` accepts
+    /// `true`, `false`, `1`, and `0`; word values are case-insensitive.
+    pub fn from_reader(reader: R, batch_size: usize) -> Result<Self> {
+        let reader = csv::ReaderBuilder::new()
+            .trim(csv::Trim::All)
+            .from_reader(reader);
+        Self::from_csv_reader(reader, batch_size)
+    }
+
+    fn from_csv_reader(mut reader: csv::Reader<R>, batch_size: usize) -> Result<Self> {
+        assert!(
+            batch_size > 0,
+            "CSV fetcher batch size must be greater than zero"
+        );
+
+        const HEADERS: [&str; 2] = ["date", "is_open"];
+        let headers = reader.headers()?;
+        if !headers.iter().eq(HEADERS) {
+            return Err(FetchError::InvalidHeaders {
+                expected: HEADERS.join(","),
+                actual: headers.iter().collect::<Vec<_>>().join(","),
+            }
+            .into());
+        }
+
+        Ok(Self {
+            reader,
+            batch_size,
+            finished: false,
+        })
+    }
+
+    fn parse_record(record: &csv::StringRecord) -> Result<CalendarEntry> {
+        let row = record.position().map_or(0, csv::Position::line);
+        let date = csv_field(record, row, 0, "date")?
+            .parse()
+            .map_err(|source| FetchError::InvalidRecord { row, source })?;
+        let is_open = match csv_field(record, row, 1, "is_open")? {
+            "1" => true,
+            "0" => false,
+            value if value.eq_ignore_ascii_case("true") => true,
+            value if value.eq_ignore_ascii_case("false") => false,
+            value => {
+                return Err(FetchError::InvalidField {
+                    row,
+                    field: "is_open",
+                    value: value.to_owned(),
+                }
+                .into());
+            }
+        };
+
+        Ok(CalendarEntry { date, is_open })
+    }
+}
+
+impl CsvCalendarFetcher<File> {
+    /// Opens a CSV file and creates a batched calendar fetcher.
+    pub fn from_path(path: impl AsRef<Path>, batch_size: usize) -> Result<Self> {
+        let reader = csv::ReaderBuilder::new()
+            .trim(csv::Trim::All)
+            .from_path(path)?;
+        Self::from_csv_reader(reader, batch_size)
+    }
+}
+
+impl<R: Read> Fetcher for CsvCalendarFetcher<R> {
+    type Item = CalendarEntry;
+
+    fn fetch(&mut self) -> Result<Option<Vec<Self::Item>>> {
+        if self.finished {
+            return Ok(None);
+        }
+
+        let mut batch = Vec::with_capacity(self.batch_size);
+        let mut record = csv::StringRecord::new();
+        while batch.len() < self.batch_size {
+            if !self.reader.read_record(&mut record)? {
+                self.finished = true;
+                break;
+            }
+            batch.push(Self::parse_record(&record)?);
+        }
+
+        if batch.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(batch))
+        }
+    }
+}
+
+fn csv_field<'a>(
+    record: &'a csv::StringRecord,
+    row: u64,
+    index: usize,
+    name: &'static str,
+) -> Result<&'a str> {
+    record
+        .get(index)
+        .ok_or_else(|| FetchError::MissingField { row, field: name }.into())
+}
+
+fn validate_ohlc(
+    open: Option<Price>,
+    high: Option<Price>,
+    low: Option<Price>,
+    close: Option<Price>,
+) -> std::result::Result<(), ValidationError> {
+    if let (Some(low), Some(high)) = (low, high)
+        && low > high
+    {
+        return Err(ValidationError::Ohlc {
+            reason: "`low` must not be greater than `high`".into(),
+        });
+    }
+
+    for (name, value) in [("open", open), ("close", close)] {
+        if let (Some(value), Some(low)) = (value, low)
+            && value < low
+        {
+            return Err(ValidationError::Ohlc {
+                reason: format!("`{name}` must not be below `low`"),
+            });
+        }
+        if let (Some(value), Some(high)) = (value, high)
+            && value > high
+        {
+            return Err(ValidationError::Ohlc {
+                reason: format!("`{name}` must not be above `high`"),
+            });
+        }
+    }
+
+    Ok(())
 }
