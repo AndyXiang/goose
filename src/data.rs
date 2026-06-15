@@ -17,6 +17,7 @@ use diesel::{
 use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 use rust_decimal::{Decimal, prelude::ToPrimitive};
 use std::{
+    collections::HashMap,
     fmt,
     fs::File,
     io::Read,
@@ -169,7 +170,7 @@ impl DataBase {
     /// Returns whether `query_date` is open according to the trading calendar.
     ///
     /// Returns [`LookupError::CalendarDate`] when the calendar has no entry for the date.
-    pub fn is_trading_day(&mut self, query_date: Date) -> Result<bool> {
+    pub fn is_trading_day(&mut self, query_date: &Date) -> Result<bool> {
         use crate::schema::calendar;
 
         calendar::table
@@ -177,14 +178,14 @@ impl DataBase {
             .select(calendar::is_open)
             .first::<bool>(&mut self.conn)
             .optional()?
-            .ok_or_else(|| LookupError::CalendarDate { date: query_date }.into())
+            .ok_or_else(|| LookupError::CalendarDate { date: *query_date }.into())
     }
 
     /// Returns open trading dates in the inclusive interval `[start, end]`.
     ///
     /// Dates are ordered ascending. An interval with no open dates returns an empty vector.
     /// Panics when `start` is after `end`.
-    pub fn get_trading_days(&mut self, start: Date, end: Date) -> Result<Vec<Date>> {
+    pub fn get_trading_days(&mut self, start: &Date, end: &Date) -> Result<Vec<Date>> {
         use crate::schema::calendar;
 
         assert!(start <= end, "start date {start} is after end date {end}");
@@ -200,7 +201,7 @@ impl DataBase {
     }
 
     /// Returns the earliest open trading date strictly after `query_date`, if one exists.
-    pub fn first_trading_day_after(&mut self, query_date: Date) -> Result<Option<Date>> {
+    pub fn next_trading_day(&mut self, query_date: &Date) -> Result<Option<Date>> {
         use crate::schema::calendar;
 
         calendar::table
@@ -214,7 +215,7 @@ impl DataBase {
     }
 
     /// Returns the latest open trading date strictly before `query_date`, if one exists.
-    pub fn last_trading_day_before(&mut self, query_date: Date) -> Result<Option<Date>> {
+    pub fn previous_trading_day(&mut self, query_date: &Date) -> Result<Option<Date>> {
         use crate::schema::calendar;
 
         calendar::table
@@ -245,7 +246,7 @@ impl DataBase {
     pub fn get_bar(
         &mut self,
         symbol: &str,
-        query_date: Date,
+        query_date: &Date,
         adjustment: PriceAdjust,
     ) -> Result<DateBar> {
         use crate::schema::daily_bars;
@@ -260,7 +261,7 @@ impl DataBase {
             .ok_or_else(|| {
                 LookupError::Bar {
                     symbol: symbol.to_owned(),
-                    date: query_date,
+                    date: *query_date,
                     adjustment,
                 }
                 .into()
@@ -269,21 +270,24 @@ impl DataBase {
 
     /// Returns all symbols with bars on `query_date` for one adjustment basis.
     ///
-    /// Bars are ordered by symbol. No matches returns an empty vector.
+    /// Bars are keyed by symbol. No matches returns an empty map.
     pub fn get_cross_section(
         &mut self,
-        query_date: Date,
+        query_date: &Date,
         adjustment: PriceAdjust,
-    ) -> Result<Vec<DateBar>> {
+    ) -> Result<HashMap<String, DateBar>> {
         use crate::schema::daily_bars;
 
-        daily_bars::table
+        let bars = daily_bars::table
             .filter(daily_bars::date.eq(query_date))
             .filter(daily_bars::is_adjust.eq(adjustment))
             .select(DateBar::as_select())
-            .order(daily_bars::symbol.asc())
-            .load::<DateBar>(&mut self.conn)
-            .map_err(Into::into)
+            .load::<DateBar>(&mut self.conn)?;
+
+        Ok(bars
+            .into_iter()
+            .map(|bar| (bar.symbol.clone(), bar))
+            .collect())
     }
 
     /// Returns one symbol's bars in the inclusive interval `[start, end]`.
@@ -293,8 +297,8 @@ impl DataBase {
     pub fn get_history(
         &mut self,
         symbol: &str,
-        start: Date,
-        end: Date,
+        start: &Date,
+        end: &Date,
         adjustment: PriceAdjust,
     ) -> Result<Vec<DateBar>> {
         use crate::schema::daily_bars;

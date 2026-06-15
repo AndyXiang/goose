@@ -81,6 +81,10 @@ fn bar(symbol: &str, date: &str, close: &str) -> DateBar {
     }
 }
 
+fn date(value: &str) -> Date {
+    value.parse().unwrap()
+}
+
 #[test]
 fn insert_and_upsert_calendar_entries() {
     let mut database = DataBase::new(":memory:");
@@ -95,7 +99,7 @@ fn insert_and_upsert_calendar_entries() {
             .unwrap(),
         1
     );
-    assert!(!database.is_trading_day(date).unwrap());
+    assert!(!database.is_trading_day(&date).unwrap());
 
     assert_eq!(
         database
@@ -106,7 +110,7 @@ fn insert_and_upsert_calendar_entries() {
             .unwrap(),
         1
     );
-    assert!(database.is_trading_day(date).unwrap());
+    assert!(database.is_trading_day(&date).unwrap());
 }
 
 #[test]
@@ -148,7 +152,7 @@ fn insert_and_upsert_bars() {
         1
     );
 
-    let stored = database.get_bar("AAPL", date, PriceAdjust::Raw).unwrap();
+    let stored = database.get_bar("AAPL", &date, PriceAdjust::Raw).unwrap();
     assert_eq!(stored.close.unwrap().to_string(), "12.5000");
 }
 
@@ -193,16 +197,8 @@ fn insert_from_persists_all_fetched_batches() {
     ]);
 
     assert_eq!(database.insert_from(&mut fetcher).unwrap(), 2);
-    assert!(
-        database
-            .is_trading_day("2026-06-15".parse().unwrap())
-            .unwrap()
-    );
-    assert!(
-        !database
-            .is_trading_day("2026-06-16".parse().unwrap())
-            .unwrap()
-    );
+    assert!(database.is_trading_day(&date("2026-06-15")).unwrap());
+    assert!(!database.is_trading_day(&date("2026-06-16")).unwrap());
 }
 
 #[test]
@@ -223,7 +219,7 @@ fn upsert_from_uses_the_items_conflict_policy() {
     assert_eq!(database.upsert_from(&mut fetcher).unwrap(), 1);
     assert_eq!(
         database
-            .get_bar("AAPL", date, PriceAdjust::Raw)
+            .get_bar("AAPL", &date, PriceAdjust::Raw)
             .unwrap()
             .close
             .unwrap()
@@ -273,27 +269,15 @@ fn persist_from_keeps_batches_committed_before_a_later_fetch_error() {
     let mut fetcher = FailingFetcher { fetch_count: 0 };
 
     assert!(database.insert_from(&mut fetcher).is_err());
-    assert!(
-        database
-            .is_trading_day("2026-06-15".parse().unwrap())
-            .unwrap()
-    );
+    assert!(database.is_trading_day(&date("2026-06-15")).unwrap());
 }
 
 #[test]
 fn is_trading_day_returns_calendar_status() {
     let mut database = database_with_calendar();
 
-    assert!(
-        database
-            .is_trading_day("2026-06-15".parse().unwrap())
-            .unwrap()
-    );
-    assert!(
-        !database
-            .is_trading_day("2026-06-14".parse().unwrap())
-            .unwrap()
-    );
+    assert!(database.is_trading_day(&date("2026-06-15")).unwrap());
+    assert!(!database.is_trading_day(&date("2026-06-14")).unwrap());
 }
 
 #[test]
@@ -301,7 +285,7 @@ fn is_trading_day_errors_when_calendar_data_is_missing() {
     let mut database = database_with_calendar();
     let date: Date = "2026-06-11".parse().unwrap();
 
-    let error = database.is_trading_day(date).unwrap_err();
+    let error = database.is_trading_day(&date).unwrap_err();
 
     assert!(matches!(
         error,
@@ -315,7 +299,7 @@ fn get_trading_day_returns_open_dates_in_inclusive_interval() {
     let mut database = database_with_calendar();
 
     let dates = database
-        .get_trading_days("2026-06-12".parse().unwrap(), "2026-06-15".parse().unwrap())
+        .get_trading_days(&date("2026-06-12"), &date("2026-06-15"))
         .unwrap();
 
     assert_eq!(
@@ -329,7 +313,7 @@ fn get_trading_day_returns_empty_when_no_open_dates_exist() {
     let mut database = database_with_calendar();
 
     let dates = database
-        .get_trading_days("2026-06-13".parse().unwrap(), "2026-06-14".parse().unwrap())
+        .get_trading_days(&date("2026-06-13"), &date("2026-06-14"))
         .unwrap();
 
     assert!(dates.is_empty());
@@ -341,16 +325,16 @@ fn get_trading_day_rejects_reversed_interval() {
     let mut database = database_with_calendar();
 
     let _ = database
-        .get_trading_days("2026-06-15".parse().unwrap(), "2026-06-12".parse().unwrap())
+        .get_trading_days(&date("2026-06-15"), &date("2026-06-12"))
         .unwrap();
 }
 
 #[test]
-fn first_trading_day_after_uses_a_strict_boundary() {
+fn next_trading_day_uses_a_strict_boundary() {
     let mut database = database_with_calendar();
 
     let date = database
-        .first_trading_day_after("2026-06-12".parse().unwrap())
+        .next_trading_day(&date("2026-06-12"))
         .unwrap()
         .unwrap();
 
@@ -358,22 +342,20 @@ fn first_trading_day_after_uses_a_strict_boundary() {
 }
 
 #[test]
-fn first_trading_day_after_returns_none_when_none_exists() {
+fn next_trading_day_returns_none_when_none_exists() {
     let mut database = database_with_calendar();
 
-    let date = database
-        .first_trading_day_after("2026-06-16".parse().unwrap())
-        .unwrap();
+    let date = database.next_trading_day(&date("2026-06-16")).unwrap();
 
     assert!(date.is_none());
 }
 
 #[test]
-fn last_trading_day_before_uses_a_strict_boundary() {
+fn previous_trading_day_uses_a_strict_boundary() {
     let mut database = database_with_calendar();
 
     let date = database
-        .last_trading_day_before("2026-06-15".parse().unwrap())
+        .previous_trading_day(&date("2026-06-15"))
         .unwrap()
         .unwrap();
 
@@ -381,12 +363,10 @@ fn last_trading_day_before_uses_a_strict_boundary() {
 }
 
 #[test]
-fn last_trading_day_before_returns_none_when_none_exists() {
+fn previous_trading_day_returns_none_when_none_exists() {
     let mut database = database_with_calendar();
 
-    let date = database
-        .last_trading_day_before("2026-06-12".parse().unwrap())
-        .unwrap();
+    let date = database.previous_trading_day(&date("2026-06-12")).unwrap();
 
     assert!(date.is_none());
 }
@@ -405,7 +385,7 @@ fn get_bar_returns_one_symbol_date_and_adjustment() {
     let mut database = database_with_calendar();
 
     let bar = database
-        .get_bar("AAPL", "2026-06-12".parse().unwrap(), PriceAdjust::Raw)
+        .get_bar("AAPL", &date("2026-06-12"), PriceAdjust::Raw)
         .unwrap();
 
     assert_eq!(bar.symbol, "AAPL");
@@ -419,7 +399,7 @@ fn get_bar_returns_a_typed_lookup_error_when_missing() {
     let mut database = database_with_calendar();
 
     let error = database
-        .get_bar("GOOG", "2026-06-12".parse().unwrap(), PriceAdjust::Raw)
+        .get_bar("GOOG", &date("2026-06-12"), PriceAdjust::Raw)
         .unwrap_err();
 
     assert!(matches!(
@@ -437,13 +417,13 @@ fn get_cross_section_returns_all_symbols_for_one_date() {
     let mut database = database_with_calendar();
 
     let bars = database
-        .get_cross_section("2026-06-12".parse().unwrap(), PriceAdjust::Raw)
+        .get_cross_section(&date("2026-06-12"), PriceAdjust::Raw)
         .unwrap();
 
     assert_eq!(bars.len(), 2);
-    assert_eq!(bars[0].symbol, "AAPL");
-    assert_eq!(bars[1].symbol, "MSFT");
-    assert!(bars.iter().all(|bar| bar.is_adjust == PriceAdjust::Raw));
+    assert_eq!(bars["AAPL"].symbol, "AAPL");
+    assert_eq!(bars["MSFT"].symbol, "MSFT");
+    assert!(bars.values().all(|bar| bar.is_adjust == PriceAdjust::Raw));
 }
 
 #[test]
@@ -453,8 +433,8 @@ fn get_history_returns_one_symbols_ordered_history() {
     let bars = database
         .get_history(
             "AAPL",
-            "2026-06-12".parse().unwrap(),
-            "2026-06-16".parse().unwrap(),
+            &date("2026-06-12"),
+            &date("2026-06-16"),
             PriceAdjust::Raw,
         )
         .unwrap();
@@ -473,8 +453,8 @@ fn get_history_rejects_reversed_interval() {
     let _ = database
         .get_history(
             "AAPL",
-            "2026-06-15".parse().unwrap(),
-            "2026-06-12".parse().unwrap(),
+            &date("2026-06-15"),
+            &date("2026-06-12"),
             PriceAdjust::Raw,
         )
         .unwrap();

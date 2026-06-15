@@ -1,4 +1,4 @@
-use crate::data::{Date, PriceAdjust};
+use crate::data::{Date, Price, PriceAdjust};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -10,6 +10,8 @@ pub enum Error {
     Fetch(#[from] FetchError),
     #[error(transparent)]
     Lookup(#[from] LookupError),
+    #[error(transparent)]
+    Backtest(#[from] BacktestError),
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -65,6 +67,30 @@ pub enum LookupError {
         symbol: String,
         date: Date,
         adjustment: PriceAdjust,
+    },
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum BacktestError {
+    #[error("initial cash must not be negative: {cash}")]
+    NegativeInitialCash { cash: Price },
+    #[error("order symbol must not be empty")]
+    EmptyOrderSymbol,
+    #[error("order quantity must be greater than zero")]
+    ZeroOrderQuantity,
+    #[error("cash arithmetic overflow")]
+    CashOverflow,
+    #[error("position arithmetic overflow for {symbol}")]
+    PositionOverflow { symbol: String },
+    #[error("insufficient cash: required {required}, available {available}")]
+    InsufficientCash { required: Price, available: Price },
+    #[error(
+        "insufficient position for {symbol}: requested {requested} shares, available {available}"
+    )]
+    InsufficientPosition {
+        symbol: String,
+        requested: u32,
+        available: u32,
     },
 }
 
