@@ -10,3 +10,5 @@ diesel = { version = "2.3.10", features = ["sqlite"] }
 diesel_migrations = "2.3.2"
 rust_decimal = "1.42.1"
 thiserror = "2.0.18"
+clap = { version = "4", features = ["derive", "env"] }
+serde_json = "1"
