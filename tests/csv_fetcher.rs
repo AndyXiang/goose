@@ -2,10 +2,10 @@ use goose::data::{CsvBarFetcher, CsvCalendarFetcher, Fetcher, PriceAdjust};
 use goose::error::{Error, FetchError};
 use std::io::Cursor;
 
-const CSV: &str = "symbol,date,is_adjust,open,high,low,close
-AAPL,2026-06-12,raw,10,11,9.5,10.5
-MSFT,2026-06-12,qfq,20,21,19.5,20.5
-GOOG,2026-06-15,hfq,,,,
+const CSV: &str = "symbol,date,price_adjust,open,high,low,close,volume,amount
+AAPL,2026-06-12,raw,10,11,9.5,10.5,1000,10500
+MSFT,2026-06-12,qfq,20,21,19.5,20.5,2000,41000
+GOOG,2026-06-15,hfq,,,,,,
 ";
 
 #[test]
@@ -15,19 +15,21 @@ fn csv_fetcher_returns_validated_batches_until_eof() {
     let first = fetcher.fetch().unwrap().unwrap();
     assert_eq!(first.len(), 2);
     assert_eq!(first[0].symbol, "AAPL");
-    assert_eq!(first[0].close.unwrap().to_string(), "10.5000");
-    assert_eq!(first[1].is_adjust, PriceAdjust::Qfq);
+    assert_eq!(first[0].ohlc.close.unwrap().to_string(), "10.5000");
+    assert_eq!(first[0].volume.unwrap().to_string(), "1000.0000");
+    assert_eq!(first[0].amount.unwrap().to_string(), "10500.0000");
+    assert_eq!(first[1].ohlc.price_adjust, PriceAdjust::Qfq);
 
     let second = fetcher.fetch().unwrap().unwrap();
     assert_eq!(second.len(), 1);
     assert_eq!(second[0].symbol, "GOOG");
-    assert!(second[0].open.is_none());
+    assert!(second[0].ohlc.open.is_none());
     assert!(fetcher.fetch().unwrap().is_none());
 }
 
 #[test]
 fn csv_fetcher_rejects_invalid_headers_and_batch_size() {
-    let invalid_headers = "date,symbol,is_adjust,open,high,low,close\n";
+    let invalid_headers = "date,symbol,price_adjust,open,high,low,close,volume,amount\n";
 
     let error = match CsvBarFetcher::from_reader(Cursor::new(invalid_headers), 1) {
         Ok(_) => panic!("invalid headers were accepted"),
@@ -47,11 +49,11 @@ fn csv_bar_fetcher_rejects_zero_batch_size() {
 
 #[test]
 fn csv_fetcher_rejects_invalid_domain_values() {
-    let invalid_date = "symbol,date,is_adjust,open,high,low,close
-AAPL,2026-02-29,raw,10,11,9,10
+    let invalid_date = "symbol,date,price_adjust,open,high,low,close,volume,amount
+AAPL,2026-02-29,raw,10,11,9,10,1000,10000
 ";
-    let invalid_ohlc = "symbol,date,is_adjust,open,high,low,close
-AAPL,2026-06-12,raw,10,9,11,10
+    let invalid_ohlc = "symbol,date,price_adjust,open,high,low,close,volume,amount
+AAPL,2026-06-12,raw,10,9,11,10,1000,10000
 ";
 
     let mut date_fetcher = CsvBarFetcher::from_reader(Cursor::new(invalid_date), 1).unwrap();

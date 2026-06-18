@@ -1,6 +1,6 @@
 use super::{
-    db::{CalendarEntry, DataBase, DateBar},
-    decimal::Price,
+    db::{CalendarEntry, DataBase, DateBar, Ohlc},
+    decimal::{Price, Quantity},
 };
 use crate::error::{FetchError, Result};
 use std::{fs::File, io::Read, path::Path};
@@ -50,8 +50,9 @@ pub struct CsvBarFetcher<R: Read> {
 impl<R: Read> CsvBarFetcher<R> {
     /// Creates a batched bar fetcher from a CSV reader.
     ///
-    /// The CSV must contain the headers `symbol,date,is_adjust,open,high,low,close` in that
-    /// order. Empty OHLC fields are returned as `None`.
+    /// The CSV must contain the headers
+    /// `symbol,date,price_adjust,open,high,low,close,volume,amount` in that order.
+    /// Empty price and quantity fields are returned as `None`.
     pub fn from_reader(reader: R, batch_size: usize) -> Result<Self> {
         let reader = csv::ReaderBuilder::new()
             .trim(csv::Trim::All)
@@ -65,14 +66,16 @@ impl<R: Read> CsvBarFetcher<R> {
             "CSV fetcher batch size must be greater than zero"
         );
 
-        const HEADERS: [&str; 7] = [
+        const HEADERS: [&str; 9] = [
             "symbol",
             "date",
-            "is_adjust",
+            "price_adjust",
             "open",
             "high",
             "low",
             "close",
+            "volume",
+            "amount",
         ];
         let headers = reader.headers()?;
         if !headers.iter().eq(HEADERS) {
@@ -102,19 +105,36 @@ impl<R: Read> CsvBarFetcher<R> {
                 .map(Some)
                 .map_err(|source| FetchError::InvalidRecord { row, source }.into())
         };
-
-        DateBar::new(
-            csv_field(record, row, 0, "symbol")?,
-            csv_field(record, row, 1, "date")?
+        let parse_quantity = |index: usize, name: &'static str| -> Result<Option<Quantity>> {
+            let value = csv_field(record, row, index, name)?;
+            if value.is_empty() {
+                return Ok(None);
+            }
+            value
                 .parse()
-                .map_err(|source| FetchError::InvalidRecord { row, source })?,
-            csv_field(record, row, 2, "is_adjust")?
+                .map(Some)
+                .map_err(|source| FetchError::InvalidRecord { row, source }.into())
+        };
+
+        let ohlc = Ohlc::new(
+            csv_field(record, row, 2, "price_adjust")?
                 .parse()
                 .map_err(|source| FetchError::InvalidRecord { row, source })?,
             parse_price(3, "open")?,
             parse_price(4, "high")?,
             parse_price(5, "low")?,
             parse_price(6, "close")?,
+        )
+        .map_err(|source| FetchError::InvalidRecord { row, source })?;
+
+        DateBar::new(
+            csv_field(record, row, 0, "symbol")?,
+            csv_field(record, row, 1, "date")?
+                .parse()
+                .map_err(|source| FetchError::InvalidRecord { row, source })?,
+            ohlc,
+            parse_quantity(7, "volume")?,
+            parse_price(8, "amount")?,
         )
         .map_err(|source| FetchError::InvalidRecord { row, source }.into())
     }

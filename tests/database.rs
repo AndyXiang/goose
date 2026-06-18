@@ -1,7 +1,10 @@
 use std::collections::VecDeque;
 
 use diesel::{Connection, SqliteConnection, connection::SimpleConnection};
-use goose::data::{CalendarEntry, DataBase, Date, DateBar, Fetcher, Persistable, PriceAdjust};
+use goose::data::{
+    CalendarEntry, DataBase, Date, DateBar, Fetcher, Ohlc, Persistable, Price, PriceAdjust,
+    Quantity,
+};
 use goose::error::{Error, FetchError, LookupError, Result};
 
 struct BatchFetcher<T> {
@@ -41,7 +44,7 @@ fn database_with_calendar() -> DataBase {
     .unwrap();
     conn.batch_execute(
         "INSERT INTO daily_bars
-            (symbol, date, is_adjust, open, high, low, close)
+            (symbol, date, price_adjust, open, high, low, close)
          VALUES
             ('AAPL', '2026-06-12', 'raw', 100000, 110000, 95000, 105000),
             ('AAPL', '2026-06-12', 'qfq',  90000, 100000, 85000,  95000),
@@ -62,7 +65,7 @@ fn new_runs_migrations_and_enables_foreign_keys() {
         database
             .conn
             .batch_execute(
-                "INSERT INTO daily_bars (symbol, date, is_adjust)
+                "INSERT INTO daily_bars (symbol, date, price_adjust)
                  VALUES ('AAPL', '2026-06-15', 'raw');",
             )
             .is_err()
@@ -70,14 +73,19 @@ fn new_runs_migrations_and_enables_foreign_keys() {
 }
 
 fn bar(symbol: &str, date: &str, close: &str) -> DateBar {
+    let volume: Quantity = "1000".parse().unwrap();
     DateBar {
-        symbol: symbol.into(),
         date: date.parse().unwrap(),
-        is_adjust: PriceAdjust::Raw,
-        open: Some(close.parse().unwrap()),
-        high: Some(close.parse().unwrap()),
-        low: Some(close.parse().unwrap()),
-        close: Some(close.parse().unwrap()),
+        ohlc: Ohlc {
+            price_adjust: PriceAdjust::Raw,
+            open: Some(close.parse().unwrap()),
+            high: Some(close.parse().unwrap()),
+            low: Some(close.parse().unwrap()),
+            close: Some(close.parse().unwrap()),
+        },
+        volume: Some(volume),
+        amount: Some(close.parse::<Price>().unwrap() * volume),
+        symbol: symbol.into(),
     }
 }
 
@@ -153,7 +161,9 @@ fn insert_and_upsert_bars() {
     );
 
     let stored = database.get_bar("AAPL", &date, PriceAdjust::Raw).unwrap();
-    assert_eq!(stored.close.unwrap().to_string(), "12.5000");
+    assert_eq!(stored.ohlc.close.unwrap().to_string(), "12.5000");
+    assert_eq!(stored.volume.unwrap().to_string(), "1000.0000");
+    assert_eq!(stored.amount.unwrap().to_string(), "12500.0000");
 }
 
 #[test]
@@ -221,6 +231,7 @@ fn upsert_from_uses_the_items_conflict_policy() {
         database
             .get_bar("AAPL", &date, PriceAdjust::Raw)
             .unwrap()
+            .ohlc
             .close
             .unwrap()
             .to_string(),
@@ -390,8 +401,8 @@ fn get_bar_returns_one_symbol_date_and_adjustment() {
 
     assert_eq!(bar.symbol, "AAPL");
     assert_eq!(bar.date.to_string(), "2026-06-12");
-    assert_eq!(bar.is_adjust, PriceAdjust::Raw);
-    assert_eq!(bar.close.unwrap().to_string(), "10.5000");
+    assert_eq!(bar.ohlc.price_adjust, PriceAdjust::Raw);
+    assert_eq!(bar.ohlc.close.unwrap().to_string(), "10.5000");
 }
 
 #[test]
@@ -423,7 +434,10 @@ fn get_cross_section_returns_all_symbols_for_one_date() {
     assert_eq!(bars.len(), 2);
     assert_eq!(bars["AAPL"].symbol, "AAPL");
     assert_eq!(bars["MSFT"].symbol, "MSFT");
-    assert!(bars.values().all(|bar| bar.is_adjust == PriceAdjust::Raw));
+    assert!(
+        bars.values()
+            .all(|bar| bar.ohlc.price_adjust == PriceAdjust::Raw)
+    );
 }
 
 #[test]

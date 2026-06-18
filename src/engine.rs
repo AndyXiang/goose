@@ -185,7 +185,7 @@ where
                                 self.events.push_front(Market(Open(
                                     cross_section
                                         .into_iter()
-                                        .map(|(symbol, bar)| (symbol, bar.open))
+                                        .map(|(symbol, bar)| (symbol, bar.ohlc.open))
                                         .collect(),
                                 )));
                             }

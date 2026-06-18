@@ -1,5 +1,5 @@
 use super::{
-    decimal::Price,
+    decimal::{Price, Quantity},
     fetcher::{Fetcher, Persistable},
 };
 use crate::{
@@ -146,45 +146,70 @@ impl ToSql<Text, Sqlite> for PriceAdjust {
 #[diesel(table_name = crate::schema::daily_bars)]
 #[diesel(check_for_backend(diesel::sqlite::Sqlite))]
 #[diesel(treat_none_as_default_value = false)]
-pub struct DateBar {
-    pub date: Date,
-    pub symbol: String,
+pub struct Ohlc {
+    pub price_adjust: PriceAdjust,
     pub open: Option<Price>,
     pub high: Option<Price>,
     pub low: Option<Price>,
     pub close: Option<Price>,
-    pub is_adjust: PriceAdjust,
 }
 
-impl DateBar {
-    /// Creates a bar after validating its symbol and OHLC relationships.
+impl Ohlc {
+    /// Creates OHLC data after validating its price relationships.
     ///
-    /// Empty symbols are rejected. When the relevant prices are present, `low` must not exceed
-    /// `high`, and `open` and `close` must lie within the inclusive `[low, high]` range.
-    #[allow(clippy::too_many_arguments)]
+    /// When the relevant prices are present, `low` must not exceed `high`, and `open` and `close`
+    /// must lie within the inclusive `[low, high]` range.
     pub fn new(
-        symbol: impl Into<String>,
-        date: Date,
-        adjustment: PriceAdjust,
+        price_adjust: PriceAdjust,
         open: Option<Price>,
         high: Option<Price>,
         low: Option<Price>,
         close: Option<Price>,
+    ) -> std::result::Result<Self, ValidationError> {
+        validate_ohlc(open, high, low, close)?;
+        Ok(Self {
+            price_adjust,
+            open,
+            high,
+            low,
+            close,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Queryable, Selectable, Insertable)]
+#[diesel(table_name = crate::schema::daily_bars)]
+#[diesel(check_for_backend(diesel::sqlite::Sqlite))]
+#[diesel(treat_none_as_default_value = false)]
+pub struct DateBar {
+    pub date: Date,
+    #[diesel(embed)]
+    pub ohlc: Ohlc,
+    pub volume: Option<Quantity>,
+    pub amount: Option<Price>,
+    pub symbol: String,
+}
+
+impl DateBar {
+    /// Creates a bar after validating its symbol.
+    pub fn new(
+        symbol: impl Into<String>,
+        date: Date,
+        ohlc: Ohlc,
+        volume: Option<Quantity>,
+        amount: Option<Price>,
     ) -> std::result::Result<Self, ValidationError> {
         let symbol = symbol.into();
         if symbol.trim().is_empty() {
             return Err(ValidationError::EmptySymbol);
         }
 
-        validate_ohlc(open, high, low, close)?;
         Ok(Self {
-            symbol,
             date,
-            is_adjust: adjustment,
-            open,
-            high,
-            low,
-            close,
+            ohlc,
+            volume,
+            amount,
+            symbol,
         })
     }
 }
@@ -286,7 +311,7 @@ impl DataBase {
 
     /// Inserts bars and returns the number of inserted rows.
     ///
-    /// Duplicate `(symbol, date, is_adjust)` keys produce a database constraint error. Calendar
+    /// Duplicate `(symbol, date, price_adjust)` keys produce a database constraint error. Calendar
     /// entries for all bar dates must already exist. Empty input returns zero.
     pub fn insert_bars(&mut self, bars: &[DateBar]) -> Result<usize> {
         if bars.is_empty() {
@@ -299,10 +324,10 @@ impl DataBase {
             .map_err(Into::into)
     }
 
-    /// Inserts bars or updates OHLC values when their business key already exists.
+    /// Inserts bars or updates bar values when their business key already exists.
     ///
-    /// The conflict key is `(symbol, date, is_adjust)`. Calendar entries for all bar dates must
-    /// already exist. Empty input returns zero.
+    /// The conflict key is `(symbol, date, price_adjust)`. Calendar entries for all bar dates
+    /// must already exist. Empty input returns zero.
     pub fn upsert_bars(&mut self, bars: &[DateBar]) -> Result<usize> {
         if bars.is_empty() {
             return Ok(0);
@@ -316,7 +341,7 @@ impl DataBase {
                         .on_conflict((
                             schema::daily_bars::symbol,
                             schema::daily_bars::date,
-                            schema::daily_bars::is_adjust,
+                            schema::daily_bars::price_adjust,
                         ))
                         .do_update()
                         .set((
@@ -324,6 +349,8 @@ impl DataBase {
                             schema::daily_bars::high.eq(excluded(schema::daily_bars::high)),
                             schema::daily_bars::low.eq(excluded(schema::daily_bars::low)),
                             schema::daily_bars::close.eq(excluded(schema::daily_bars::close)),
+                            schema::daily_bars::volume.eq(excluded(schema::daily_bars::volume)),
+                            schema::daily_bars::amount.eq(excluded(schema::daily_bars::amount)),
                         ))
                         .execute(conn)
                         .map(|count| total + count)
@@ -456,7 +483,7 @@ impl DataBase {
         daily_bars::table
             .filter(daily_bars::symbol.eq(symbol))
             .filter(daily_bars::date.eq(query_date))
-            .filter(daily_bars::is_adjust.eq(adjustment))
+            .filter(daily_bars::price_adjust.eq(adjustment))
             .select(DateBar::as_select())
             .first::<DateBar>(&mut self.conn)
             .optional()?
@@ -482,7 +509,7 @@ impl DataBase {
 
         let bars = daily_bars::table
             .filter(daily_bars::date.eq(query_date))
-            .filter(daily_bars::is_adjust.eq(adjustment))
+            .filter(daily_bars::price_adjust.eq(adjustment))
             .select(DateBar::as_select())
             .load::<DateBar>(&mut self.conn)?;
 
@@ -511,7 +538,7 @@ impl DataBase {
             .filter(daily_bars::symbol.eq(symbol))
             .filter(daily_bars::date.ge(start))
             .filter(daily_bars::date.le(end))
-            .filter(daily_bars::is_adjust.eq(adjustment))
+            .filter(daily_bars::price_adjust.eq(adjustment))
             .select(DateBar::as_select())
             .order(daily_bars::date.asc())
             .load::<DateBar>(&mut self.conn)

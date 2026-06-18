@@ -16,14 +16,16 @@ CREATE TABLE daily_bars (
             date = strftime('%Y-%m-%d', date)
             AND date(strftime('%Y-%m-%d', date)) = date
         ),
-    is_adjust TEXT NOT NULL
-        CHECK (is_adjust IN ('raw', 'qfq', 'hfq')),
+    price_adjust TEXT NOT NULL
+        CHECK (price_adjust IN ('raw', 'qfq', 'hfq')),
     open BIGINT,
     high BIGINT,
     low BIGINT,
     close BIGINT,
+    volume BIGINT,
+    amount BIGINT,
 
-    UNIQUE (symbol, date, is_adjust),
+    UNIQUE (symbol, date, price_adjust),
     FOREIGN KEY (date) REFERENCES calendar(date)
         ON UPDATE CASCADE
         ON DELETE RESTRICT,
