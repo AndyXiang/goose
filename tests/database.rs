@@ -32,6 +32,7 @@ fn database_with_calendar() -> DataBase {
         "../migrations/2026-06-12-081652-0000_create_bar_calendar/up.sql"
     ))
     .unwrap();
+    conn.batch_execute("PRAGMA foreign_keys = ON;").unwrap();
     conn.batch_execute(
         "INSERT INTO calendar (date, is_open) VALUES
             ('2026-06-12', TRUE),
@@ -177,6 +178,89 @@ fn insert_bars_rejects_duplicate_business_keys() {
     database.insert_bars(std::slice::from_ref(&value)).unwrap();
 
     assert!(database.insert_bars(&[value]).is_err());
+}
+
+#[test]
+fn delete_bar_removes_one_symbol_date() {
+    let mut database = database_with_calendar();
+
+    assert_eq!(database.delete_bar("AAPL", &date("2026-06-12")).unwrap(), 1);
+    assert!(database.get_bar("AAPL", &date("2026-06-12")).is_err());
+    assert!(database.get_bar("MSFT", &date("2026-06-12")).is_ok());
+    assert_eq!(database.delete_bar("AAPL", &date("2026-06-12")).unwrap(), 0);
+}
+
+#[test]
+fn delete_history_removes_one_symbols_interval() {
+    let mut database = database_with_calendar();
+
+    assert_eq!(
+        database
+            .delete_history("AAPL", &date("2026-06-12"), &date("2026-06-16"))
+            .unwrap(),
+        2
+    );
+
+    assert!(
+        database
+            .get_history("AAPL", &date("2026-06-12"), &date("2026-06-16"))
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        database
+            .get_history("MSFT", &date("2026-06-12"), &date("2026-06-16"))
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
+#[should_panic(expected = "start date 2026-06-15 is after end date 2026-06-12")]
+fn delete_history_rejects_reversed_interval() {
+    let mut database = database_with_calendar();
+
+    let _ = database
+        .delete_history("AAPL", &date("2026-06-15"), &date("2026-06-12"))
+        .unwrap();
+}
+
+#[test]
+fn delete_section_removes_all_bars_on_one_date() {
+    let mut database = database_with_calendar();
+
+    assert_eq!(database.delete_section(&date("2026-06-12")).unwrap(), 2);
+    assert!(
+        database
+            .get_cross_section(&date("2026-06-12"))
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        database
+            .get_cross_section(&date("2026-06-15"))
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn delete_calendar_removes_unreferenced_calendar_entries() {
+    let mut database = database_with_calendar();
+
+    assert_eq!(database.delete_calendar(&date("2026-06-13")).unwrap(), 1);
+    assert!(database.is_trading_day(&date("2026-06-13")).is_err());
+    assert_eq!(database.delete_calendar(&date("2026-06-13")).unwrap(), 0);
+}
+
+#[test]
+fn delete_calendar_rejects_dates_referenced_by_bars() {
+    let mut database = database_with_calendar();
+
+    assert!(database.delete_calendar(&date("2026-06-12")).is_err());
+    assert!(database.is_trading_day(&date("2026-06-12")).unwrap());
 }
 
 #[test]

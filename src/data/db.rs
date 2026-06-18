@@ -305,6 +305,57 @@ impl DataBase {
             .map_err(Into::into)
     }
 
+    /// Deletes one bar identified by symbol and date, returning the affected row count.
+    pub fn delete_bar(&mut self, symbol: &str, query_date: &Date) -> Result<usize> {
+        use crate::schema::daily_bars;
+
+        diesel::delete(
+            daily_bars::table
+                .filter(daily_bars::symbol.eq(symbol))
+                .filter(daily_bars::date.eq(query_date)),
+        )
+        .execute(&mut self.conn)
+        .map_err(Into::into)
+    }
+
+    /// Deletes one symbol's bars in the inclusive interval `[start, end]`.
+    ///
+    /// Returns the affected row count. Panics when `start` is after `end`.
+    pub fn delete_history(&mut self, symbol: &str, start: &Date, end: &Date) -> Result<usize> {
+        use crate::schema::daily_bars;
+
+        assert!(start <= end, "start date {start} is after end date {end}");
+
+        diesel::delete(
+            daily_bars::table
+                .filter(daily_bars::symbol.eq(symbol))
+                .filter(daily_bars::date.ge(start))
+                .filter(daily_bars::date.le(end)),
+        )
+        .execute(&mut self.conn)
+        .map_err(Into::into)
+    }
+
+    /// Deletes all bars on one date, returning the affected row count.
+    pub fn delete_section(&mut self, query_date: &Date) -> Result<usize> {
+        use crate::schema::daily_bars;
+
+        diesel::delete(daily_bars::table.filter(daily_bars::date.eq(query_date)))
+            .execute(&mut self.conn)
+            .map_err(Into::into)
+    }
+
+    /// Deletes one calendar entry, returning the affected row count.
+    ///
+    /// If bars still reference the date, SQLite rejects the delete through the foreign key.
+    pub fn delete_calendar(&mut self, query_date: &Date) -> Result<usize> {
+        use crate::schema::calendar;
+
+        diesel::delete(calendar::table.filter(calendar::date.eq(query_date)))
+            .execute(&mut self.conn)
+            .map_err(Into::into)
+    }
+
     /// Fetches batches and inserts every item, returning the total affected row count.
     ///
     /// Each successful batch is committed before the next batch is fetched. If a later fetch or
