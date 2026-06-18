@@ -1,9 +1,8 @@
-use goose::data::{DateBar, Ohlc, PriceAdjust};
+use goose::data::{DateBar, Ohlc};
 
 #[test]
 fn date_bar_new_accepts_valid_and_partial_prices() {
     let ohlc = Ohlc::new(
-        PriceAdjust::Raw,
         Some("10".parse().unwrap()),
         Some("11".parse().unwrap()),
         Some("9".parse().unwrap()),
@@ -28,7 +27,7 @@ fn date_bar_new_accepts_valid_and_partial_prices() {
         DateBar::new(
             "MSFT",
             "2026-06-15".parse().unwrap(),
-            Ohlc::new(PriceAdjust::Raw, None, None, None, None).unwrap(),
+            Ohlc::new(None, None, None, None).unwrap(),
             None,
             None,
         )
@@ -39,7 +38,7 @@ fn date_bar_new_accepts_valid_and_partial_prices() {
 #[test]
 fn date_bar_new_rejects_empty_symbols() {
     let date = "2026-06-15".parse().unwrap();
-    let ohlc = Ohlc::new(PriceAdjust::Raw, None, None, None, None).unwrap();
+    let ohlc = Ohlc::new(None, None, None, None).unwrap();
 
     assert!(DateBar::new("  ", date, ohlc, None, None).is_err());
 }
@@ -48,7 +47,6 @@ fn date_bar_new_rejects_empty_symbols() {
 fn ohlc_new_rejects_invalid_ohlc() {
     assert!(
         Ohlc::new(
-            PriceAdjust::Raw,
             Some("10".parse().unwrap()),
             Some("9".parse().unwrap()),
             Some("11".parse().unwrap()),
@@ -58,7 +56,6 @@ fn ohlc_new_rejects_invalid_ohlc() {
     );
     assert!(
         Ohlc::new(
-            PriceAdjust::Raw,
             Some("12".parse().unwrap()),
             Some("11".parse().unwrap()),
             Some("9".parse().unwrap()),

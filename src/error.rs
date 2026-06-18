@@ -1,4 +1,4 @@
-use crate::data::{Date, Price, PriceAdjust};
+use crate::data::{Date, Price};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -28,8 +28,6 @@ pub enum ValidationError {
     Price { reason: String },
     #[error("invalid quantity: {reason}")]
     Quantity { reason: String },
-    #[error("invalid price adjustment: {value}")]
-    PriceAdjust { value: String },
     #[error("symbol must not be empty")]
     EmptySymbol,
     #[error("invalid OHLC data: {reason}")]
@@ -64,12 +62,8 @@ pub enum FetchError {
 pub enum LookupError {
     #[error("no calendar data for {date}")]
     CalendarDate { date: Date },
-    #[error("no bar for {symbol} on {date} using {adjustment}")]
-    Bar {
-        symbol: String,
-        date: Date,
-        adjustment: PriceAdjust,
-    },
+    #[error("no bar for {symbol} on {date}")]
+    Bar { symbol: String, date: Date },
 }
 
 #[derive(thiserror::Error, Debug)]

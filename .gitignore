@@ -4,3 +4,4 @@ Cargo.lock
 *.db
 /todo.md
 rustfmt.toml
+tests/data/*

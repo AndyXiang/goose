@@ -12,7 +12,6 @@ diesel::table! {
         id -> Integer,
         symbol -> Text,
         date -> Text,
-        price_adjust -> Text,
         open -> Nullable<BigInt>,
         high -> Nullable<BigInt>,
         low -> Nullable<BigInt>,

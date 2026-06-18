@@ -2,8 +2,7 @@ use std::collections::VecDeque;
 
 use diesel::{Connection, SqliteConnection, connection::SimpleConnection};
 use goose::data::{
-    CalendarEntry, DataBase, Date, DateBar, Fetcher, Ohlc, Persistable, Price, PriceAdjust,
-    Quantity,
+    CalendarEntry, DataBase, Date, DateBar, Fetcher, Ohlc, Persistable, Price, Quantity,
 };
 use goose::error::{Error, FetchError, LookupError, Result};
 
@@ -44,13 +43,12 @@ fn database_with_calendar() -> DataBase {
     .unwrap();
     conn.batch_execute(
         "INSERT INTO daily_bars
-            (symbol, date, price_adjust, open, high, low, close)
+            (symbol, date, open, high, low, close)
          VALUES
-            ('AAPL', '2026-06-12', 'raw', 100000, 110000, 95000, 105000),
-            ('AAPL', '2026-06-12', 'qfq',  90000, 100000, 85000,  95000),
-            ('MSFT', '2026-06-12', 'raw', 190000, 205000, 185000, 200000),
-            ('MSFT', '2026-06-15', 'raw', 200000, 210000, 195000, 205000),
-            ('AAPL', '2026-06-16', 'raw', 106000, 112000, 101000, 110000);",
+            ('AAPL', '2026-06-12', 100000, 110000, 95000, 105000),
+            ('MSFT', '2026-06-12', 190000, 205000, 185000, 200000),
+            ('MSFT', '2026-06-15', 200000, 210000, 195000, 205000),
+            ('AAPL', '2026-06-16', 106000, 112000, 101000, 110000);",
     )
     .unwrap();
     DataBase { conn }
@@ -65,8 +63,8 @@ fn new_runs_migrations_and_enables_foreign_keys() {
         database
             .conn
             .batch_execute(
-                "INSERT INTO daily_bars (symbol, date, price_adjust)
-                 VALUES ('AAPL', '2026-06-15', 'raw');",
+                "INSERT INTO daily_bars (symbol, date)
+                 VALUES ('AAPL', '2026-06-15');",
             )
             .is_err()
     );
@@ -77,7 +75,6 @@ fn bar(symbol: &str, date: &str, close: &str) -> DateBar {
     DateBar {
         date: date.parse().unwrap(),
         ohlc: Ohlc {
-            price_adjust: PriceAdjust::Raw,
             open: Some(close.parse().unwrap()),
             high: Some(close.parse().unwrap()),
             low: Some(close.parse().unwrap()),
@@ -160,7 +157,7 @@ fn insert_and_upsert_bars() {
         1
     );
 
-    let stored = database.get_bar("AAPL", &date, PriceAdjust::Raw).unwrap();
+    let stored = database.get_bar("AAPL", &date).unwrap();
     assert_eq!(stored.ohlc.close.unwrap().to_string(), "12.5000");
     assert_eq!(stored.volume.unwrap().to_string(), "1000.0000");
     assert_eq!(stored.amount.unwrap().to_string(), "12500.0000");
@@ -229,7 +226,7 @@ fn upsert_from_uses_the_items_conflict_policy() {
     assert_eq!(database.upsert_from(&mut fetcher).unwrap(), 1);
     assert_eq!(
         database
-            .get_bar("AAPL", &date, PriceAdjust::Raw)
+            .get_bar("AAPL", &date)
             .unwrap()
             .ohlc
             .close
@@ -392,16 +389,13 @@ fn available_symbols_returns_sorted_distinct_values() {
 }
 
 #[test]
-fn get_bar_returns_one_symbol_date_and_adjustment() {
+fn get_bar_returns_one_symbol_date() {
     let mut database = database_with_calendar();
 
-    let bar = database
-        .get_bar("AAPL", &date("2026-06-12"), PriceAdjust::Raw)
-        .unwrap();
+    let bar = database.get_bar("AAPL", &date("2026-06-12")).unwrap();
 
     assert_eq!(bar.symbol, "AAPL");
     assert_eq!(bar.date.to_string(), "2026-06-12");
-    assert_eq!(bar.ohlc.price_adjust, PriceAdjust::Raw);
     assert_eq!(bar.ohlc.close.unwrap().to_string(), "10.5000");
 }
 
@@ -409,16 +403,13 @@ fn get_bar_returns_one_symbol_date_and_adjustment() {
 fn get_bar_returns_a_typed_lookup_error_when_missing() {
     let mut database = database_with_calendar();
 
-    let error = database
-        .get_bar("GOOG", &date("2026-06-12"), PriceAdjust::Raw)
-        .unwrap_err();
+    let error = database.get_bar("GOOG", &date("2026-06-12")).unwrap_err();
 
     assert!(matches!(
         error,
         Error::Lookup(LookupError::Bar {
             symbol,
             date,
-            adjustment: PriceAdjust::Raw,
         }) if symbol == "GOOG" && date.to_string() == "2026-06-12"
     ));
 }
@@ -427,17 +418,11 @@ fn get_bar_returns_a_typed_lookup_error_when_missing() {
 fn get_cross_section_returns_all_symbols_for_one_date() {
     let mut database = database_with_calendar();
 
-    let bars = database
-        .get_cross_section(&date("2026-06-12"), PriceAdjust::Raw)
-        .unwrap();
+    let bars = database.get_cross_section(&date("2026-06-12")).unwrap();
 
     assert_eq!(bars.len(), 2);
     assert_eq!(bars["AAPL"].symbol, "AAPL");
     assert_eq!(bars["MSFT"].symbol, "MSFT");
-    assert!(
-        bars.values()
-            .all(|bar| bar.ohlc.price_adjust == PriceAdjust::Raw)
-    );
 }
 
 #[test]
@@ -445,12 +430,7 @@ fn get_history_returns_one_symbols_ordered_history() {
     let mut database = database_with_calendar();
 
     let bars = database
-        .get_history(
-            "AAPL",
-            &date("2026-06-12"),
-            &date("2026-06-16"),
-            PriceAdjust::Raw,
-        )
+        .get_history("AAPL", &date("2026-06-12"), &date("2026-06-16"))
         .unwrap();
 
     assert_eq!(bars.len(), 2);
@@ -465,11 +445,6 @@ fn get_history_rejects_reversed_interval() {
     let mut database = database_with_calendar();
 
     let _ = database
-        .get_history(
-            "AAPL",
-            &date("2026-06-15"),
-            &date("2026-06-12"),
-            PriceAdjust::Raw,
-        )
+        .get_history("AAPL", &date("2026-06-15"), &date("2026-06-12"))
         .unwrap();
 }

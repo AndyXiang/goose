@@ -95,59 +95,11 @@ impl ToSql<Text, Sqlite> for Date {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, AsExpression, FromSqlRow)]
-#[diesel(sql_type = Text)]
-pub enum PriceAdjust {
-    Raw,
-    Qfq,
-    Hfq,
-}
-
-impl FromStr for PriceAdjust {
-    type Err = ValidationError;
-
-    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
-        match value {
-            "raw" => Ok(Self::Raw),
-            "qfq" => Ok(Self::Qfq),
-            "hfq" => Ok(Self::Hfq),
-            value => Err(ValidationError::PriceAdjust {
-                value: value.to_owned(),
-            }),
-        }
-    }
-}
-
-impl fmt::Display for PriceAdjust {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let value = match self {
-            Self::Raw => "raw",
-            Self::Qfq => "qfq",
-            Self::Hfq => "hfq",
-        };
-        formatter.write_str(value)
-    }
-}
-
-impl FromSql<Text, Sqlite> for PriceAdjust {
-    fn from_sql(value: SqliteValue<'_, '_, '_>) -> deserialize::Result<Self> {
-        Ok(<String as FromSql<Text, Sqlite>>::from_sql(value)?.parse()?)
-    }
-}
-
-impl ToSql<Text, Sqlite> for PriceAdjust {
-    fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Sqlite>) -> serialize::Result {
-        out.set_value(self.to_string());
-        Ok(IsNull::No)
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Queryable, Selectable, Insertable)]
 #[diesel(table_name = crate::schema::daily_bars)]
 #[diesel(check_for_backend(diesel::sqlite::Sqlite))]
 #[diesel(treat_none_as_default_value = false)]
 pub struct Ohlc {
-    pub price_adjust: PriceAdjust,
     pub open: Option<Price>,
     pub high: Option<Price>,
     pub low: Option<Price>,
@@ -160,7 +112,6 @@ impl Ohlc {
     /// When the relevant prices are present, `low` must not exceed `high`, and `open` and `close`
     /// must lie within the inclusive `[low, high]` range.
     pub fn new(
-        price_adjust: PriceAdjust,
         open: Option<Price>,
         high: Option<Price>,
         low: Option<Price>,
@@ -168,7 +119,6 @@ impl Ohlc {
     ) -> std::result::Result<Self, ValidationError> {
         validate_ohlc(open, high, low, close)?;
         Ok(Self {
-            price_adjust,
             open,
             high,
             low,
@@ -311,8 +261,8 @@ impl DataBase {
 
     /// Inserts bars and returns the number of inserted rows.
     ///
-    /// Duplicate `(symbol, date, price_adjust)` keys produce a database constraint error. Calendar
-    /// entries for all bar dates must already exist. Empty input returns zero.
+    /// Duplicate `(symbol, date)` keys produce a database constraint error. Calendar entries for
+    /// all bar dates must already exist. Empty input returns zero.
     pub fn insert_bars(&mut self, bars: &[DateBar]) -> Result<usize> {
         if bars.is_empty() {
             return Ok(0);
@@ -326,8 +276,8 @@ impl DataBase {
 
     /// Inserts bars or updates bar values when their business key already exists.
     ///
-    /// The conflict key is `(symbol, date, price_adjust)`. Calendar entries for all bar dates
-    /// must already exist. Empty input returns zero.
+    /// The conflict key is `(symbol, date)`. Calendar entries for all bar dates must already exist.
+    /// Empty input returns zero.
     pub fn upsert_bars(&mut self, bars: &[DateBar]) -> Result<usize> {
         if bars.is_empty() {
             return Ok(0);
@@ -338,11 +288,7 @@ impl DataBase {
                 bars.iter().try_fold(0, |total, bar| {
                     diesel::insert_into(schema::daily_bars::table)
                         .values(bar)
-                        .on_conflict((
-                            schema::daily_bars::symbol,
-                            schema::daily_bars::date,
-                            schema::daily_bars::price_adjust,
-                        ))
+                        .on_conflict((schema::daily_bars::symbol, schema::daily_bars::date))
                         .do_update()
                         .set((
                             schema::daily_bars::open.eq(excluded(schema::daily_bars::open)),
@@ -469,21 +415,15 @@ impl DataBase {
             .map_err(Into::into)
     }
 
-    /// Returns one bar identified by symbol, date, and adjustment basis.
+    /// Returns one bar identified by symbol and date.
     ///
     /// Returns [`LookupError::Bar`] when no matching bar exists.
-    pub fn get_bar(
-        &mut self,
-        symbol: &str,
-        query_date: &Date,
-        adjustment: PriceAdjust,
-    ) -> Result<DateBar> {
+    pub fn get_bar(&mut self, symbol: &str, query_date: &Date) -> Result<DateBar> {
         use crate::schema::daily_bars;
 
         daily_bars::table
             .filter(daily_bars::symbol.eq(symbol))
             .filter(daily_bars::date.eq(query_date))
-            .filter(daily_bars::price_adjust.eq(adjustment))
             .select(DateBar::as_select())
             .first::<DateBar>(&mut self.conn)
             .optional()?
@@ -491,25 +431,19 @@ impl DataBase {
                 LookupError::Bar {
                     symbol: symbol.to_owned(),
                     date: *query_date,
-                    adjustment,
                 }
                 .into()
             })
     }
 
-    /// Returns all symbols with bars on `query_date` for one adjustment basis.
+    /// Returns all symbols with bars on `query_date`.
     ///
     /// Bars are keyed by symbol. No matches returns an empty map.
-    pub fn get_cross_section(
-        &mut self,
-        query_date: &Date,
-        adjustment: PriceAdjust,
-    ) -> Result<HashMap<String, DateBar>> {
+    pub fn get_cross_section(&mut self, query_date: &Date) -> Result<HashMap<String, DateBar>> {
         use crate::schema::daily_bars;
 
         let bars = daily_bars::table
             .filter(daily_bars::date.eq(query_date))
-            .filter(daily_bars::price_adjust.eq(adjustment))
             .select(DateBar::as_select())
             .load::<DateBar>(&mut self.conn)?;
 
@@ -521,15 +455,9 @@ impl DataBase {
 
     /// Returns one symbol's bars in the inclusive interval `[start, end]`.
     ///
-    /// Bars are filtered to one adjustment basis and ordered by date ascending. No matches
-    /// returns an empty vector. Panics when `start` is after `end`.
-    pub fn get_history(
-        &mut self,
-        symbol: &str,
-        start: &Date,
-        end: &Date,
-        adjustment: PriceAdjust,
-    ) -> Result<Vec<DateBar>> {
+    /// Bars are ordered by date ascending. No matches returns an empty vector. Panics when `start`
+    /// is after `end`.
+    pub fn get_history(&mut self, symbol: &str, start: &Date, end: &Date) -> Result<Vec<DateBar>> {
         use crate::schema::daily_bars;
 
         assert!(start <= end, "start date {start} is after end date {end}");
@@ -538,7 +466,6 @@ impl DataBase {
             .filter(daily_bars::symbol.eq(symbol))
             .filter(daily_bars::date.ge(start))
             .filter(daily_bars::date.le(end))
-            .filter(daily_bars::price_adjust.eq(adjustment))
             .select(DateBar::as_select())
             .order(daily_bars::date.asc())
             .load::<DateBar>(&mut self.conn)

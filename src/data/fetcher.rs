@@ -50,8 +50,8 @@ pub struct CsvBarFetcher<R: Read> {
 impl<R: Read> CsvBarFetcher<R> {
     /// Creates a batched bar fetcher from a CSV reader.
     ///
-    /// The CSV must contain the headers
-    /// `symbol,date,price_adjust,open,high,low,close,volume,amount` in that order.
+    /// The CSV must contain the headers `symbol,date,open,high,low,close,volume,amount` in that
+    /// order.
     /// Empty price and quantity fields are returned as `None`.
     pub fn from_reader(reader: R, batch_size: usize) -> Result<Self> {
         let reader = csv::ReaderBuilder::new()
@@ -66,16 +66,8 @@ impl<R: Read> CsvBarFetcher<R> {
             "CSV fetcher batch size must be greater than zero"
         );
 
-        const HEADERS: [&str; 9] = [
-            "symbol",
-            "date",
-            "price_adjust",
-            "open",
-            "high",
-            "low",
-            "close",
-            "volume",
-            "amount",
+        const HEADERS: [&str; 8] = [
+            "symbol", "date", "open", "high", "low", "close", "volume", "amount",
         ];
         let headers = reader.headers()?;
         if !headers.iter().eq(HEADERS) {
@@ -117,13 +109,10 @@ impl<R: Read> CsvBarFetcher<R> {
         };
 
         let ohlc = Ohlc::new(
-            csv_field(record, row, 2, "price_adjust")?
-                .parse()
-                .map_err(|source| FetchError::InvalidRecord { row, source })?,
-            parse_price(3, "open")?,
-            parse_price(4, "high")?,
-            parse_price(5, "low")?,
-            parse_price(6, "close")?,
+            parse_price(2, "open")?,
+            parse_price(3, "high")?,
+            parse_price(4, "low")?,
+            parse_price(5, "close")?,
         )
         .map_err(|source| FetchError::InvalidRecord { row, source })?;
 
@@ -133,8 +122,8 @@ impl<R: Read> CsvBarFetcher<R> {
                 .parse()
                 .map_err(|source| FetchError::InvalidRecord { row, source })?,
             ohlc,
-            parse_quantity(7, "volume")?,
-            parse_price(8, "amount")?,
+            parse_quantity(6, "volume")?,
+            parse_price(7, "amount")?,
         )
         .map_err(|source| FetchError::InvalidRecord { row, source }.into())
     }

@@ -1,6 +1,6 @@
 #![allow(unused)]
 use crate::{
-    data::{DataBase, Date, DateBar, Price, PriceAdjust},
+    data::{DataBase, Date, DateBar, Price},
     error::{BacktestError, Result},
     strat::Strategy,
 };
@@ -124,9 +124,7 @@ impl BTLogger {
     }
 }
 
-pub struct BTConfig {
-    pub price_adjust: PriceAdjust,
-}
+pub struct BTConfig {}
 
 pub struct BTEngine<B, S>
 where
@@ -179,8 +177,7 @@ where
                             use MarketEvent::*;
                             // get all data and push
                             for trade_date in &trading_days {
-                                let cross_section = database
-                                    .get_cross_section(trade_date, self.config.price_adjust)?;
+                                let cross_section = database.get_cross_section(trade_date)?;
                                 self.events.push_front(Market(Close(cross_section.clone())));
                                 self.events.push_front(Market(Open(
                                     cross_section
