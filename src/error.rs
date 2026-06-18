@@ -26,6 +26,8 @@ pub enum ValidationError {
     Date { value: String },
     #[error("invalid price: {reason}")]
     Price { reason: String },
+    #[error("invalid quantity: {reason}")]
+    Quantity { reason: String },
     #[error("invalid price adjustment: {value}")]
     PriceAdjust { value: String },
     #[error("symbol must not be empty")]

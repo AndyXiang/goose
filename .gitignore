@@ -3,3 +3,4 @@ Cargo.lock
 .env
 *.db
 /todo.md
+rustfmt.toml

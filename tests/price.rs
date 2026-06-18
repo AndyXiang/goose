@@ -1,4 +1,4 @@
-use goose::data::Price;
+use goose::data::{Price, Quantity};
 use rust_decimal::Decimal;
 
 #[test]
@@ -47,4 +47,27 @@ fn dividing_prices_returns_a_ratio() {
     let denominator: Price = "8.0000".parse().unwrap();
 
     assert_eq!(numerator / denominator, Decimal::new(15, 1));
+}
+
+#[test]
+fn price_and_quantity_arithmetic_returns_price_values() {
+    let price: Price = "12.5000".parse().unwrap();
+    let quantity: Quantity = "3.0000".parse().unwrap();
+    let total: Price = "37.5000".parse().unwrap();
+
+    assert_eq!(price * quantity, total);
+    assert_eq!(quantity * price, total);
+    assert_eq!(total / quantity, price);
+}
+
+#[test]
+fn checked_price_quantity_operations_report_invalid_results() {
+    let max: Price = "922337203685477.5807".parse().unwrap();
+    let two: Quantity = "2.0000".parse().unwrap();
+    let one: Price = "1.0000".parse().unwrap();
+    let zero: Quantity = "0.0000".parse().unwrap();
+
+    assert!(max.checked_mul_quantity(two).is_none());
+    assert!(two.checked_mul_price(max).is_none());
+    assert!(one.checked_div_quantity(zero).is_none());
 }
