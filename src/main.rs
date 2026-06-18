@@ -13,6 +13,8 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<()> {
+    dotenvy::dotenv().ok();
+
     match Cli::parse() {
         Cli::Db { action } => action.act(),
     }

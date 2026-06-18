@@ -52,15 +52,29 @@ fn csv_fetcher_rejects_invalid_domain_values() {
     let invalid_date = "symbol,date,open,high,low,close,volume,amount
 AAPL,2026-02-29,10,11,9,10,1000,10000
 ";
-    let invalid_ohlc = "symbol,date,open,high,low,close,volume,amount
-AAPL,2026-06-12,10,9,11,10,1000,10000
-";
 
     let mut date_fetcher = CsvBarFetcher::from_reader(Cursor::new(invalid_date), 1).unwrap();
     assert!(date_fetcher.fetch().is_err());
+}
 
-    let mut ohlc_fetcher = CsvBarFetcher::from_reader(Cursor::new(invalid_ohlc), 1).unwrap();
-    assert!(ohlc_fetcher.fetch().is_err());
+#[test]
+fn csv_bar_fetcher_returns_null_payload_for_invalid_bar_values() {
+    let invalid_bars = "symbol,date,open,high,low,close,volume,amount
+AAPL,2026-06-12,10,9,11,10,1000,10000
+MSFT,2026-06-12,bad,21,19.5,20.5,2000,41000
+";
+    let mut fetcher = CsvBarFetcher::from_reader(Cursor::new(invalid_bars), 10).unwrap();
+    let bars = fetcher.fetch().unwrap().unwrap();
+
+    assert_eq!(bars.len(), 2);
+    for bar in bars {
+        assert!(bar.ohlc.open.is_none());
+        assert!(bar.ohlc.high.is_none());
+        assert!(bar.ohlc.low.is_none());
+        assert!(bar.ohlc.close.is_none());
+        assert!(bar.volume.is_none());
+        assert!(bar.amount.is_none());
+    }
 }
 
 #[test]

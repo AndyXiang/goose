@@ -12,6 +12,8 @@ pub enum Error {
     Lookup(#[from] LookupError),
     #[error(transparent)]
     Backtest(#[from] BacktestError),
+    #[error(transparent)]
+    Cli(#[from] CliError),
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -64,6 +66,18 @@ pub enum LookupError {
     CalendarDate { date: Date },
     #[error("no bar for {symbol} on {date}")]
     Bar { symbol: String, date: Date },
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum CliError {
+    #[error("failed to read import directory {path}: {source}")]
+    ReadImportDirectory {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("import path is neither a file nor a directory: {path}")]
+    InvalidImportPath { path: String },
 }
 
 #[derive(thiserror::Error, Debug)]
