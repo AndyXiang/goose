@@ -391,3 +391,15 @@ impl ToSql<BigInt, Sqlite> for Quantity {
         Ok(IsNull::No)
     }
 }
+
+impl Default for Quantity {
+    fn default() -> Self {
+        Self(Decimal::default())
+    }
+}
+
+impl Default for Price {
+    fn default() -> Self {
+        Self(Decimal::default())
+    }
+}
