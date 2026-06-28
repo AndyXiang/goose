@@ -17,6 +17,8 @@ pub enum MarketEvent {
     Open(HashMap<String, (Date, Option<Price>)>),
     // see full bar when market closes
     Close(HashMap<String, DateBar>),
+    // preview all day data fro broker
+    Preview(HashMap<String, DateBar>),
 }
 
 #[derive(Debug, Clone)]

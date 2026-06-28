@@ -38,7 +38,6 @@ impl Logger for EquityLogger {
             Market(market) => {
                 use MarketEvent::*;
                 match market {
-                    Open(_) => {}
                     Close(cross_section) => {
                         if let Some(date) = cross_section.values().next().map(|bar| bar.date) {
                             let market_value = cross_section.iter().fold(
@@ -62,6 +61,7 @@ impl Logger for EquityLogger {
                             );
                         }
                     }
+                    _ => {}
                 }
             }
             Fill(fill) => {

@@ -1,4 +1,4 @@
-use super::{Event, FillEvent, Logger, MarketEvent, Order, SystemEvent};
+use super::{Broker, Event, FillEvent, Logger, MarketEvent, Order, SystemEvent};
 use crate::{
     data::{DataBase, Date, Price, Quantity},
     error::{BacktestError, Result},
@@ -108,6 +108,7 @@ where
 
         while let Some(event) = self.events.pop_front() {
             use Event::{Fill, Market, System};
+            self.logger.log(&event);
             match event {
                 System(system_event) => {
                     use SystemEvent::*;
@@ -117,6 +118,7 @@ where
                             // get all data and push
                             for trade_date in trading_days.iter().rev() {
                                 let cross_section = database.get_cross_section(trade_date)?;
+                                let preview = Market(Preview(cross_section.clone()));
                                 let open = Market(Open(
                                     cross_section
                                         .iter()
@@ -128,6 +130,7 @@ where
                                 let close = Market(Close(cross_section));
                                 self.events.push_front(close);
                                 self.events.push_front(open);
+                                self.events.push_front(preview);
                             }
                         }
                         End => {
@@ -137,13 +140,21 @@ where
                     }
                 }
                 Market(market_event) => {
-                    self.logger.log(&Event::Market(market_event.clone()));
-                    // emit market event to strategy
-                    let strat_action: Order = self.strat.on_market(&market_event, &self.account);
                     use MarketEvent::*;
-                    // only accept order when market is open
-                    if let Open(_) = market_event {
-                        self.events.push_front(Event::Order(strat_action));
+                    match market_event {
+                        Open(_) => {
+                            // emit market event to strategy
+                            let strat_action: Order =
+                                self.strat.on_market(&market_event, &self.account);
+                            self.events.push_front(Event::Order(strat_action));
+                        }
+                        Close(_) => {
+                            // only accept orders when market is open
+                            self.strat.on_market(&market_event, &self.account);
+                        }
+                        Preview(_) => {
+                            self.broker.preview(&market_event);
+                        }
                     }
                 }
                 Event::Order(order_event) => {
@@ -168,18 +179,9 @@ where
                         }
                         Reject => (),
                     };
-                    self.logger.log(&Event::Fill(fill_event));
                 }
             }
         }
         Ok(())
     }
-}
-
-// broker cannot fill an order higher than high or lower than low
-// thus broker need to see the full bar even before close
-// need sepcific implementation
-
-pub trait Broker {
-    fn on_order(&mut self, order: &Order, account: &mut Account) -> Event;
 }
