@@ -18,18 +18,19 @@ fn date(value: &str) -> Date {
 }
 
 fn bar(symbol: &str, date: &str, open: &str, close: &str) -> DateBar {
+    let volume = quantity("1000");
     DateBar::new(
         symbol,
         date.parse().unwrap(),
         Ohlc::new(
-            Some(price(open)),
-            Some(price(open).max(price(close))),
-            Some(price(open).min(price(close))),
-            Some(price(close)),
+            price(open),
+            price(open).max(price(close)),
+            price(open).min(price(close)),
+            price(close),
         )
         .unwrap(),
-        None,
-        None,
+        volume,
+        price(close) * volume,
     )
     .unwrap()
 }
@@ -123,6 +124,8 @@ impl Broker for FillAllBroker {
                 .collect(),
         ))
     }
+
+    fn preview(&mut self, _market: &MarketEvent) {}
 }
 
 #[derive(Clone, Default)]

@@ -1,66 +1,41 @@
-use goose::data::{DateBar, Ohlc};
+use goose::data::{DateBar, Ohlc, Price, Quantity};
+
+fn price(value: &str) -> Price {
+    value.parse().unwrap()
+}
+
+fn quantity(value: &str) -> Quantity {
+    value.parse().unwrap()
+}
 
 #[test]
-fn date_bar_new_accepts_valid_and_partial_prices() {
-    let ohlc = Ohlc::new(
-        Some("10".parse().unwrap()),
-        Some("11".parse().unwrap()),
-        Some("9".parse().unwrap()),
-        Some("10.5".parse().unwrap()),
-    )
-    .unwrap();
+fn date_bar_new_accepts_valid_prices() {
+    let ohlc = Ohlc::new(price("10"), price("11"), price("9"), price("10.5")).unwrap();
     let bar = DateBar::new(
         "AAPL",
         "2026-06-15".parse().unwrap(),
         ohlc,
-        Some("1000".parse().unwrap()),
-        Some("10500".parse().unwrap()),
+        quantity("1000"),
+        price("10500"),
     )
     .unwrap();
 
     assert_eq!(bar.symbol, "AAPL");
-    assert_eq!(bar.ohlc.close.unwrap().to_string(), "10.5000");
-    assert_eq!(bar.volume.unwrap().to_string(), "1000.0000");
-    assert_eq!(bar.amount.unwrap().to_string(), "10500.0000");
-
-    assert!(
-        DateBar::new(
-            "MSFT",
-            "2026-06-15".parse().unwrap(),
-            Ohlc::new(None, None, None, None).unwrap(),
-            None,
-            None,
-        )
-        .is_ok()
-    );
+    assert_eq!(bar.ohlc.close.to_string(), "10.5000");
+    assert_eq!(bar.volume.to_string(), "1000.0000");
+    assert_eq!(bar.amount.to_string(), "10500.0000");
 }
 
 #[test]
 fn date_bar_new_rejects_empty_symbols() {
     let date = "2026-06-15".parse().unwrap();
-    let ohlc = Ohlc::new(None, None, None, None).unwrap();
+    let ohlc = Ohlc::new(price("10"), price("11"), price("9"), price("10.5")).unwrap();
 
-    assert!(DateBar::new("  ", date, ohlc, None, None).is_err());
+    assert!(DateBar::new("  ", date, ohlc, quantity("1000"), price("10500")).is_err());
 }
 
 #[test]
 fn ohlc_new_rejects_invalid_ohlc() {
-    assert!(
-        Ohlc::new(
-            Some("10".parse().unwrap()),
-            Some("9".parse().unwrap()),
-            Some("11".parse().unwrap()),
-            Some("10".parse().unwrap()),
-        )
-        .is_err()
-    );
-    assert!(
-        Ohlc::new(
-            Some("12".parse().unwrap()),
-            Some("11".parse().unwrap()),
-            Some("9".parse().unwrap()),
-            Some("10".parse().unwrap()),
-        )
-        .is_err()
-    );
+    assert!(Ohlc::new(price("10"), price("9"), price("11"), price("10")).is_err());
+    assert!(Ohlc::new(price("12"), price("11"), price("9"), price("10")).is_err());
 }

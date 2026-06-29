@@ -123,7 +123,7 @@ where
                                     cross_section
                                         .iter()
                                         .map(|(symbol, bar)| {
-                                            (symbol.clone(), (*trade_date, bar.ohlc.open.clone()))
+                                            (symbol.clone(), (*trade_date, Some(bar.ohlc.open)))
                                         })
                                         .collect(),
                                 ));

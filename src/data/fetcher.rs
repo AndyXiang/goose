@@ -52,9 +52,8 @@ impl<R: Read> CsvBarFetcher<R> {
     ///
     /// The CSV must contain the headers `symbol,date,open,high,low,close,volume,amount` in that
     /// order.
-    /// Empty or invalid price and quantity fields are returned as `None`. If OHLC relationships
-    /// are invalid, the whole bar payload is returned as `None` values while preserving the
-    /// required symbol and date.
+    /// Rows with empty or invalid bar payload fields are skipped. Invalid symbol or date values are
+    /// still treated as input errors because they identify the bar.
     pub fn from_reader(reader: R, batch_size: usize) -> Result<Self> {
         let reader = csv::ReaderBuilder::new()
             .trim(csv::Trim::All)
@@ -87,17 +86,19 @@ impl<R: Read> CsvBarFetcher<R> {
         })
     }
 
-    fn parse_record(record: &csv::StringRecord) -> Result<DateBar> {
+    fn parse_record(record: &csv::StringRecord) -> Result<Option<DateBar>> {
         let row = record.position().map_or(0, csv::Position::line);
         let symbol = csv_field(record, row, 0, "symbol")?;
         let date = csv_field(record, row, 1, "date")?
             .parse()
             .map_err(|source| FetchError::InvalidRecord { row, source })?;
 
-        let (ohlc, volume, amount) = parse_bar_payload(record)
-            .unwrap_or_else(|| (Ohlc::new(None, None, None, None).unwrap(), None, None));
+        let Some((ohlc, volume, amount)) = parse_bar_payload(record) else {
+            return Ok(None);
+        };
 
         DateBar::new(symbol, date, ohlc, volume, amount)
+            .map(Some)
             .map_err(|source| FetchError::InvalidRecord { row, source }.into())
     }
 }
@@ -127,7 +128,9 @@ impl<R: Read> Fetcher for CsvBarFetcher<R> {
                 self.finished = true;
                 break;
             }
-            batch.push(Self::parse_record(&record)?);
+            if let Some(bar) = Self::parse_record(&record)? {
+                batch.push(bar);
+            }
         }
 
         if batch.is_empty() {
@@ -250,26 +253,24 @@ fn csv_field<'a>(
         .ok_or_else(|| FetchError::MissingField { row, field: name }.into())
 }
 
-fn optional_field<T>(record: &csv::StringRecord, index: usize) -> Option<Option<T>>
+fn required_payload_field<T>(record: &csv::StringRecord, index: usize) -> Option<T>
 where
     T: std::str::FromStr,
 {
     let value = record.get(index)?;
     if value.is_empty() {
-        return Some(None);
+        return None;
     }
-    value.parse().ok().map(Some)
+    value.parse().ok()
 }
 
-fn parse_bar_payload(
-    record: &csv::StringRecord,
-) -> Option<(Ohlc, Option<Quantity>, Option<Price>)> {
-    let open = optional_field(record, 2)?;
-    let high = optional_field(record, 3)?;
-    let low = optional_field(record, 4)?;
-    let close = optional_field(record, 5)?;
-    let volume = optional_field(record, 6)?;
-    let amount = optional_field(record, 7)?;
+fn parse_bar_payload(record: &csv::StringRecord) -> Option<(Ohlc, Quantity, Price)> {
+    let open = required_payload_field(record, 2)?;
+    let high = required_payload_field(record, 3)?;
+    let low = required_payload_field(record, 4)?;
+    let close = required_payload_field(record, 5)?;
+    let volume = required_payload_field(record, 6)?;
+    let amount = required_payload_field(record, 7)?;
     let ohlc = Ohlc::new(open, high, low, close).ok()?;
     Some((ohlc, volume, amount))
 }

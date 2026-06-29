@@ -100,10 +100,10 @@ impl ToSql<Text, Sqlite> for Date {
 #[diesel(check_for_backend(diesel::sqlite::Sqlite))]
 #[diesel(treat_none_as_default_value = false)]
 pub struct Ohlc {
-    pub open: Option<Price>,
-    pub high: Option<Price>,
-    pub low: Option<Price>,
-    pub close: Option<Price>,
+    pub open: Price,
+    pub high: Price,
+    pub low: Price,
+    pub close: Price,
 }
 
 impl Ohlc {
@@ -112,10 +112,10 @@ impl Ohlc {
     /// When the relevant prices are present, `low` must not exceed `high`, and `open` and `close`
     /// must lie within the inclusive `[low, high]` range.
     pub fn new(
-        open: Option<Price>,
-        high: Option<Price>,
-        low: Option<Price>,
-        close: Option<Price>,
+        open: Price,
+        high: Price,
+        low: Price,
+        close: Price,
     ) -> std::result::Result<Self, ValidationError> {
         validate_ohlc(open, high, low, close)?;
         Ok(Self {
@@ -135,8 +135,8 @@ pub struct DateBar {
     pub date: Date,
     #[diesel(embed)]
     pub ohlc: Ohlc,
-    pub volume: Option<Quantity>,
-    pub amount: Option<Price>,
+    pub volume: Quantity,
+    pub amount: Price,
     pub symbol: String,
 }
 
@@ -146,8 +146,8 @@ impl DateBar {
         symbol: impl Into<String>,
         date: Date,
         ohlc: Ohlc,
-        volume: Option<Quantity>,
-        amount: Option<Price>,
+        volume: Quantity,
+        amount: Price,
     ) -> std::result::Result<Self, ValidationError> {
         let symbol = symbol.into();
         if symbol.trim().is_empty() {
@@ -172,30 +172,24 @@ pub struct CalendarEntry {
 }
 
 fn validate_ohlc(
-    open: Option<Price>,
-    high: Option<Price>,
-    low: Option<Price>,
-    close: Option<Price>,
+    open: Price,
+    high: Price,
+    low: Price,
+    close: Price,
 ) -> std::result::Result<(), ValidationError> {
-    if let (Some(low), Some(high)) = (low, high)
-        && low > high
-    {
+    if low > high {
         return Err(ValidationError::Ohlc {
             reason: "`low` must not be greater than `high`".into(),
         });
     }
 
     for (name, value) in [("open", open), ("close", close)] {
-        if let (Some(value), Some(low)) = (value, low)
-            && value < low
-        {
+        if value < low {
             return Err(ValidationError::Ohlc {
                 reason: format!("`{name}` must not be below `low`"),
             });
         }
-        if let (Some(value), Some(high)) = (value, high)
-            && value > high
-        {
+        if value > high {
             return Err(ValidationError::Ohlc {
                 reason: format!("`{name}` must not be above `high`"),
             });

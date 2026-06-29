@@ -44,12 +44,12 @@ fn database_with_calendar() -> DataBase {
     .unwrap();
     conn.batch_execute(
         "INSERT INTO daily_bars
-            (symbol, date, open, high, low, close)
+            (symbol, date, open, high, low, close, volume, amount)
          VALUES
-            ('AAPL', '2026-06-12', 100000, 110000, 95000, 105000),
-            ('MSFT', '2026-06-12', 190000, 205000, 185000, 200000),
-            ('MSFT', '2026-06-15', 200000, 210000, 195000, 205000),
-            ('AAPL', '2026-06-16', 106000, 112000, 101000, 110000);",
+            ('AAPL', '2026-06-12', 100000, 110000, 95000, 105000, 10000000, 1050000000),
+            ('MSFT', '2026-06-12', 190000, 205000, 185000, 200000, 20000000, 4000000000),
+            ('MSFT', '2026-06-15', 200000, 210000, 195000, 205000, 15000000, 3075000000),
+            ('AAPL', '2026-06-16', 106000, 112000, 101000, 110000, 12000000, 1320000000);",
     )
     .unwrap();
     DataBase { conn }
@@ -76,13 +76,13 @@ fn bar(symbol: &str, date: &str, close: &str) -> DateBar {
     DateBar {
         date: date.parse().unwrap(),
         ohlc: Ohlc {
-            open: Some(close.parse().unwrap()),
-            high: Some(close.parse().unwrap()),
-            low: Some(close.parse().unwrap()),
-            close: Some(close.parse().unwrap()),
+            open: close.parse().unwrap(),
+            high: close.parse().unwrap(),
+            low: close.parse().unwrap(),
+            close: close.parse().unwrap(),
         },
-        volume: Some(volume),
-        amount: Some(close.parse::<Price>().unwrap() * volume),
+        volume,
+        amount: close.parse::<Price>().unwrap() * volume,
         symbol: symbol.into(),
     }
 }
@@ -159,9 +159,9 @@ fn insert_and_upsert_bars() {
     );
 
     let stored = database.get_bar("AAPL", &date).unwrap();
-    assert_eq!(stored.ohlc.close.unwrap().to_string(), "12.5000");
-    assert_eq!(stored.volume.unwrap().to_string(), "1000.0000");
-    assert_eq!(stored.amount.unwrap().to_string(), "12500.0000");
+    assert_eq!(stored.ohlc.close.to_string(), "12.5000");
+    assert_eq!(stored.volume.to_string(), "1000.0000");
+    assert_eq!(stored.amount.to_string(), "12500.0000");
 }
 
 #[test]
@@ -314,7 +314,6 @@ fn upsert_from_uses_the_items_conflict_policy() {
             .unwrap()
             .ohlc
             .close
-            .unwrap()
             .to_string(),
         "12.5000"
     );
@@ -480,7 +479,7 @@ fn get_bar_returns_one_symbol_date() {
 
     assert_eq!(bar.symbol, "AAPL");
     assert_eq!(bar.date.to_string(), "2026-06-12");
-    assert_eq!(bar.ohlc.close.unwrap().to_string(), "10.5000");
+    assert_eq!(bar.ohlc.close.to_string(), "10.5000");
 }
 
 #[test]

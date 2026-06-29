@@ -90,7 +90,6 @@ fn cli_initializes_database_and_imports_csv_files() {
             .unwrap()
             .ohlc
             .close
-            .unwrap()
             .to_string(),
         "10.5000"
     );
@@ -192,10 +191,10 @@ fn cli_import_accepts_multiple_files_and_directories() {
 }
 
 #[test]
-fn cli_import_writes_invalid_bar_data_as_null_and_continues() {
-    let db = temp_path("null-bars-database.db");
-    let calendar_csv = temp_path("null-bars-calendar.csv");
-    let bars_csv = temp_path("null-bars.csv");
+fn cli_import_skips_invalid_bar_data_and_continues() {
+    let db = temp_path("skipped-bars-database.db");
+    let calendar_csv = temp_path("skipped-bars-calendar.csv");
+    let bars_csv = temp_path("skipped-bars.csv");
 
     fs::write(
         &calendar_csv,
@@ -230,26 +229,19 @@ fn cli_import_writes_invalid_bar_data_as_null_and_continues() {
             .unwrap(),
     );
 
-    assert!(stdout.contains("Inserted 2 rows into bar"));
+    assert!(stdout.contains("Inserted 1 rows into bar"));
 
     let mut database = DataBase::new(&db.display().to_string());
     let valid_date: Date = "2026-06-12".parse().unwrap();
-    let null_date: Date = "2026-06-15".parse().unwrap();
+    let skipped_date: Date = "2026-06-15".parse().unwrap();
     assert_eq!(
         database
             .get_bar("AAPL", &valid_date)
             .unwrap()
             .ohlc
             .close
-            .unwrap()
             .to_string(),
         "10.5000"
     );
-    let null_bar = database.get_bar("MSFT", &null_date).unwrap();
-    assert!(null_bar.ohlc.open.is_none());
-    assert!(null_bar.ohlc.high.is_none());
-    assert!(null_bar.ohlc.low.is_none());
-    assert!(null_bar.ohlc.close.is_none());
-    assert!(null_bar.volume.is_none());
-    assert!(null_bar.amount.is_none());
+    assert!(database.get_bar("MSFT", &skipped_date).is_err());
 }

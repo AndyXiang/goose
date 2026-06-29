@@ -45,10 +45,7 @@ impl Logger for EquityLogger {
                                 |total, (symbol, bar)| {
                                     let position =
                                         self.position.get(symbol).copied().unwrap_or_default();
-                                    match bar.ohlc.close {
-                                        Some(close) => total + close * position,
-                                        None => total,
-                                    }
+                                    total + bar.ohlc.close * position
                                 },
                             );
                             self.equity_curve.insert(

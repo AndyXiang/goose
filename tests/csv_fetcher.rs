@@ -15,15 +15,11 @@ fn csv_fetcher_returns_validated_batches_until_eof() {
     let first = fetcher.fetch().unwrap().unwrap();
     assert_eq!(first.len(), 2);
     assert_eq!(first[0].symbol, "AAPL");
-    assert_eq!(first[0].ohlc.close.unwrap().to_string(), "10.5000");
-    assert_eq!(first[0].volume.unwrap().to_string(), "1000.0000");
-    assert_eq!(first[0].amount.unwrap().to_string(), "10500.0000");
-    assert_eq!(first[1].ohlc.close.unwrap().to_string(), "20.5000");
+    assert_eq!(first[0].ohlc.close.to_string(), "10.5000");
+    assert_eq!(first[0].volume.to_string(), "1000.0000");
+    assert_eq!(first[0].amount.to_string(), "10500.0000");
+    assert_eq!(first[1].ohlc.close.to_string(), "20.5000");
 
-    let second = fetcher.fetch().unwrap().unwrap();
-    assert_eq!(second.len(), 1);
-    assert_eq!(second[0].symbol, "GOOG");
-    assert!(second[0].ohlc.open.is_none());
     assert!(fetcher.fetch().unwrap().is_none());
 }
 
@@ -58,23 +54,20 @@ AAPL,2026-02-29,10,11,9,10,1000,10000
 }
 
 #[test]
-fn csv_bar_fetcher_returns_null_payload_for_invalid_bar_values() {
+fn csv_bar_fetcher_skips_rows_with_empty_or_invalid_bar_values() {
     let invalid_bars = "symbol,date,open,high,low,close,volume,amount
 AAPL,2026-06-12,10,9,11,10,1000,10000
 MSFT,2026-06-12,bad,21,19.5,20.5,2000,41000
+GOOG,2026-06-12,,,,,,
+NVDA,2026-06-12,20,21,19.5,20.5,2000,41000
 ";
-    let mut fetcher = CsvBarFetcher::from_reader(Cursor::new(invalid_bars), 10).unwrap();
+    let mut fetcher = CsvBarFetcher::from_reader(Cursor::new(invalid_bars), 2).unwrap();
     let bars = fetcher.fetch().unwrap().unwrap();
 
-    assert_eq!(bars.len(), 2);
-    for bar in bars {
-        assert!(bar.ohlc.open.is_none());
-        assert!(bar.ohlc.high.is_none());
-        assert!(bar.ohlc.low.is_none());
-        assert!(bar.ohlc.close.is_none());
-        assert!(bar.volume.is_none());
-        assert!(bar.amount.is_none());
-    }
+    assert_eq!(bars.len(), 1);
+    assert_eq!(bars[0].symbol, "NVDA");
+    assert_eq!(bars[0].ohlc.close.to_string(), "20.5000");
+    assert!(fetcher.fetch().unwrap().is_none());
 }
 
 #[test]
