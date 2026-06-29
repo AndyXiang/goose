@@ -16,6 +16,20 @@ fn quantity_rejects_excess_precision_and_out_of_range_values() {
 }
 
 #[test]
+fn quantity_reports_its_sign() {
+    let negative: Quantity = "-0.0001".parse().unwrap();
+    let zero: Quantity = "0.0000".parse().unwrap();
+    let positive: Quantity = "0.0001".parse().unwrap();
+
+    assert!(negative.is_negative());
+    assert!(!negative.is_positive());
+    assert!(!zero.is_negative());
+    assert!(!zero.is_positive());
+    assert!(positive.is_positive());
+    assert!(!positive.is_negative());
+}
+
+#[test]
 fn quantity_arithmetic_preserves_valid_values() {
     let mut quantity: Quantity = "10.0000".parse().unwrap();
     let adjustment: Quantity = "2.5000".parse().unwrap();

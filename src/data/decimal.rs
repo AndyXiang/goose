@@ -19,6 +19,15 @@ pub struct Price(Decimal);
 impl Price {
     pub const SCALE: u32 = 4;
     pub const MULTIPLIER: i64 = 10_000;
+
+    pub fn is_negative(self) -> bool {
+        self.0 < Decimal::ZERO
+    }
+
+    pub fn is_positive(self) -> bool {
+        self.0 > Decimal::ZERO
+    }
+
     pub fn checked_add(self, rhs: Self) -> Option<Self> {
         self.0
             .checked_add(rhs.0)
@@ -217,6 +226,14 @@ impl Quantity {
     pub const SCALE: u32 = 4;
 
     pub const MULTIPLIER: i64 = 10_000;
+
+    pub fn is_negative(self) -> bool {
+        self.0 < Decimal::ZERO
+    }
+
+    pub fn is_positive(self) -> bool {
+        self.0 > Decimal::ZERO
+    }
 
     pub fn checked_add(self, rhs: Self) -> Option<Self> {
         self.0

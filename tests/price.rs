@@ -16,6 +16,20 @@ fn price_rejects_excess_precision_and_out_of_range_values() {
 }
 
 #[test]
+fn price_reports_its_sign() {
+    let negative: Price = "-0.0001".parse().unwrap();
+    let zero: Price = "0.0000".parse().unwrap();
+    let positive: Price = "0.0001".parse().unwrap();
+
+    assert!(negative.is_negative());
+    assert!(!negative.is_positive());
+    assert!(!zero.is_negative());
+    assert!(!zero.is_positive());
+    assert!(positive.is_positive());
+    assert!(!positive.is_negative());
+}
+
+#[test]
 fn price_arithmetic_preserves_valid_prices() {
     let mut price: Price = "10.0000".parse().unwrap();
     let adjustment: Price = "2.5000".parse().unwrap();
